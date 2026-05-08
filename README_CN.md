@@ -1,5 +1,7 @@
 # Yizutt AGI MVP 中文说明
 
+[![CI](https://github.com/Yizutt/yizutt-agi-mvp/actions/workflows/ci.yml/badge.svg)](https://github.com/Yizutt/yizutt-agi-mvp/actions/workflows/ci.yml)
+
 Yizutt AGI MVP 是一个可运行的进化型终端 Agent 运行时原型。它用 Rust 实现本地 gRPC Runtime、Worker 进程管理和 WorkerPool 调度，用 Python sidecar 负责真实任务执行、模型调用、工作记忆和技能文件沉淀。
 
 这个仓库的目标不是一次性做完整 AGI 系统，而是先验证最核心闭环：
@@ -145,6 +147,8 @@ Python sidecar 支持模型通过结构化 `tool_calls` 调用 `list_dir`、`rea
 运行产生的数据库和技能输出位于 `.yizutt/`，该目录已被 Git 忽略。
 
 ## 已验证行为
+
+GitHub Actions 会在 push 到 `main` 和 pull request 时运行核心 CI 检查：`cargo check --workspace --locked`、`cargo build --workspace --locked` 和 `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`。
 
 当前原型已经在本地验证：
 

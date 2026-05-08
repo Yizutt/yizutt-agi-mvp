@@ -1,5 +1,7 @@
 # Yizutt AGI MVP
 
+[![CI](https://github.com/Yizutt/yizutt-agi-mvp/actions/workflows/ci.yml/badge.svg)](https://github.com/Yizutt/yizutt-agi-mvp/actions/workflows/ci.yml)
+
 Yizutt AGI MVP is a runnable prototype for an evolvable terminal-agent runtime. It combines a Rust gRPC runtime and worker pool with a Python sidecar that handles model calls, working memory, and reusable skill files.
 
 This repository is intentionally small. Its goal is to prove the core loop:
@@ -143,6 +145,8 @@ Working memory stores the original message text plus a tokenized FTS5 index for 
 Generated memory databases and skill outputs are stored under `.yizutt/`, which is ignored by Git.
 
 ## Verified Behavior
+
+GitHub Actions runs the core CI checks on push to `main` and on pull requests: `cargo check --workspace --locked`, `cargo build --workspace --locked`, and `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`.
 
 The current prototype has been run locally with:
 

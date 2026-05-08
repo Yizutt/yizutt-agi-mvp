@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  checks:
+    name: Rust and Python checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Cargo check
+        run: cargo check --workspace --locked
+
+      - name: Cargo build
+        run: cargo build --workspace --locked
+
+      - name: Python compile check
+        run: PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py

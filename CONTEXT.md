@@ -22,6 +22,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回。
 - **主动健康检查**：Runtime `status` 会主动探测 Worker RPC 和 Python sidecar 导入状态，任务级错误返回 `status: "error"`，不再误杀 Worker。
 - **开源许可证**：仓库根目录已添加 MIT `LICENSE`，README 和中文说明已同步许可证信息。
+- **基础 CI**：GitHub Actions 会在 push 到 `main` 和 pull request 时运行 Rust 与 Python 基础检查。
 
 ## 三、关键文件与模块
 
@@ -51,7 +52,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **工程自动化不足**：还没有 GitHub Actions CI，基础检查依赖手动执行。
+3. **端到端示例不足**：文档还缺少一条从启动 Runtime 到提交任务、工具调用、记忆查询和技能生成的完整可复制 demo。
 
 ## 六、当前任务队列
 
@@ -183,7 +184,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - `test -f LICENSE`
 - `rg -n "MIT|License|许可证" LICENSE README.md README_CN.md CONTEXT.md`
 
-### P1-3 当前执行：添加 CI
+### P1-3 已完成：添加 CI
 
 **目标**：为 Rust 和 Python 的基础检查添加 GitHub Actions。
 
@@ -197,7 +198,14 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - PR 或 push 到 main 能触发。
 - README 增加 CI 状态说明或开发检查命令。
 
-### P2-1 待执行：补充端到端使用示例
+**完成情况**：已新增 `.github/workflows/ci.yml`。CI 在 push 到 `main` 和 pull request 时运行 `cargo check --workspace --locked`、`cargo build --workspace --locked` 和 `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`。`README.md` 和 `README_CN.md` 已加入 CI badge 与检查命令说明。
+
+**手动验证命令**：
+- `cargo check --workspace --locked`
+- `cargo build --workspace --locked`
+- `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`
+
+### P2-1 当前执行：补充端到端使用示例
 
 **目标**：把本地代理、Runtime 启动、任务提交、工具调用、记忆查询、技能文件生成串成一个可复制的 demo 流程。
 
