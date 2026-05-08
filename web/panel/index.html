@@ -1061,7 +1061,12 @@
           if (!event) {
             continue;
           }
-          finalEvent = handleStreamEvent(event) || finalEvent;
+          const handled = handleStreamEvent(event);
+          if (handled) {
+            finalEvent = handled;
+            await reader.cancel();
+            return finalEvent;
+          }
         }
       }
       if (buffer.trim()) {

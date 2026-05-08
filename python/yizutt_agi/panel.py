@@ -153,7 +153,7 @@ def make_handler(config: PanelConfig) -> type[BaseHTTPRequestHandler]:
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "text/event-stream; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
-            self.send_header("Connection", "keep-alive")
+            self.send_header("Connection", "close")
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             try:
@@ -163,6 +163,8 @@ def make_handler(config: PanelConfig) -> type[BaseHTTPRequestHandler]:
                 return
             except Exception as exc:
                 self.write_sse({"type": "error", "error": str(exc)})
+            finally:
+                self.close_connection = True
 
         def write_sse(self, event: dict[str, Any]) -> None:
             body = f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8")
