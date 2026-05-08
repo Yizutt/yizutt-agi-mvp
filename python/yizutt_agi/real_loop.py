@@ -93,6 +93,9 @@ def run_real_loop(
             {"kind": "task", "provider": selected_provider, "model": selected_model},
         )
         related_memory = compact_context(memory.search(_safe_fts_query(task), limit=5))
+        related_graph = memory.graph_context(task, limit=5)
+        if related_graph:
+            related_memory = "\n".join(part for part in [related_memory, "Graph memory:", related_graph] if part)
         related_skills = skills.skill_context(task)
         prompt = build_prompt(task, related_memory, related_skills)
         raw = gateway.complete(prompt, provider=selected_provider, system=SYSTEM_PROMPT)

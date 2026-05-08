@@ -15,7 +15,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - `clap` based CLI with explicit `run`, `submit`, and `status` commands.
 - Python TaskExecutor sidecar launched by Rust workers for real task execution.
 - Model gateway adapters for OpenAI, Anthropic, OpenAI-compatible local proxies, and a placeholder local endpoint.
-- SQLite FTS5 working memory with extra tokenized search for Chinese and English queries.
+- SQLite FTS5 working memory with extra tokenized search and a minimal SQLite graph memory.
 - Skill persistence as `SKILL.md` files with draft, replay-check, and active states.
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
 - Local Web panel for Runtime status, task submission, recent memory, skill summaries, and language switching.
@@ -28,7 +28,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - `crates/yizutt-runtime` contains the Rust runtime, worker process, CLI client, and WorkerPool.
 - `python/yizutt_agi/executor.py` is the Python sidecar used by Rust workers.
 - `python/yizutt_agi/model_gateway.py` provides one model gateway interface.
-- `python/yizutt_agi/memory.py` stores cross-session working memory in SQLite FTS5.
+- `python/yizutt_agi/memory.py` stores cross-session working memory in SQLite FTS5 plus entity/relation graph tables.
 - `python/yizutt_agi/skills.py` stores reusable skills as `SKILL.md` files.
 - `python/yizutt_agi/i18n.py` resolves global language short codes, environment defaults, and CLI entrypoint suffixes.
 - `python/yizutt_agi/panel.py` serves the local Web panel and proxies panel API calls to the runtime CLI.
@@ -171,6 +171,16 @@ Working memory stores the original message text plus a tokenized FTS5 index for 
 
 Generated memory databases and skill outputs are stored under `.yizutt/`, which is ignored by Git.
 
+## Graph Memory
+
+The same SQLite memory database now includes `graph_entities` and `graph_relations` tables for lightweight long-term facts. `WorkingMemory.append_message()` extracts simple cross-session facts such as user preferences and project technology choices, while `add_relation()` can store explicit facts from higher-level code.
+
+Use `search_graph(query)` for structured results or `graph_context(query)` for prompt-ready lines such as `user -[prefers]-> Rust for runtime design`. The executor and direct real-loop demo append graph context to the normal FTS5 memory context when relevant facts are found.
+
+Quick check:
+
+`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import tempfile, json; td=tempfile.TemporaryDirectory(); mem=WorkingMemory(td.name+"/work.sqlite3"); mem.append_message("s1", "user", "I prefer Rust for runtime design."); mem.append_message("s2", "user", "Project Nexus uses SQLite for memory."); print(json.dumps({"rust": mem.search_graph("Rust runtime", 5), "sqlite": mem.graph_context("Nexus SQLite", 5)}, ensure_ascii=False)); mem.close(); td.cleanup()'`
+
 ## Skill Quality Control
 
 `SkillStore.save_skill()` now uses a minimal draft -> verified -> active flow. It renders a draft skill, replays the generated `SKILL.md` structure by parsing name, description, and numbered steps, and only marks the skill `active` when the replay check passes. Weak skills remain `draft` with `replay_check: failed` and are not returned by `skill_context()`.
@@ -197,17 +207,18 @@ The current prototype has been run locally with:
 - Skill replay checks, draft rejection, and same-name skill merge behavior
 - Active health checks for healthy workers, sidecar import failures, and task-level error replies
 - Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`
+- SQLite graph memory extraction and cross-session graph lookup
 
 ## MVP Boundaries
 
-This is not a production agent runtime yet. Worker sandboxes are local child processes with separate working directories. The WorkerPool performs basic dynamic scale-up but does not yet implement cgroups, containers, remote workers, durable queues, server-streaming traces, long-running tool execution, LoRA training jobs, graph memory, or production-grade backpressure.
+This is not a production agent runtime yet. Worker sandboxes are local child processes with separate working directories. The WorkerPool performs basic dynamic scale-up but does not yet implement cgroups, containers, remote workers, durable queues, server-streaming traces, long-running tool execution, LoRA training jobs, vector memory, or production-grade backpressure.
 
 ## Roadmap
 
 - Add gRPC server-streaming trace APIs.
 - Add richer tool execution cancellation and sandboxing.
 - Add stronger worker isolation with containers or OS sandboxing.
-- Add graph memory and skill ranking.
+- Add richer graph reasoning and skill ranking.
 - Add CI for Rust and Python checks.
 
 ## License

@@ -125,11 +125,15 @@ def execute_task(task_id: str, worker_id: str, task: str, session_id: str, conte
     try:
         memory.append_message(session_id, "user", task, {"kind": "runtime_task", "worker_id": worker_id})
         related_memory = compact_context(memory.search_text(task, limit=5))
+        related_graph = memory.graph_context(task, limit=5)
+        if related_graph:
+            related_memory = "\n".join(part for part in [related_memory, "Graph memory:", related_graph] if part)
         related_skills = skills.skill_context(task)
         emit(
             "context_loaded",
             "",
             memory_items=0 if not related_memory else related_memory.count("\n") + 1,
+            graph_items=0 if not related_graph else related_graph.count("\n") + 1,
             skills_chars=len(related_skills),
         )
 

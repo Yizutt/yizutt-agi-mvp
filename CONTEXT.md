@@ -24,6 +24,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **开源许可证**：仓库根目录已添加 MIT `LICENSE`，README 和中文说明已同步许可证信息。
 - **基础 CI**：GitHub Actions 会在 push 到 `main` 和 pull request 时运行 Rust 与 Python 基础检查。
 - **端到端本地 Mock Demo**：`examples/local_mock_model.py` 可提供无 API key 的确定性模型端点，README 已给出 Runtime、工具调用、记忆查询和技能生成的完整流程。
+- **SQLite Graph Memory**：`memory.py` 在 FTS5 之外增加实体/关系表，自动抽取简单用户偏好和项目技术事实，支持跨会话图谱查询并向 executor/real_loop 注入图谱上下文。
 
 ## 三、关键文件与模块
 
@@ -53,7 +54,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **长期知识图谱缺失**：目前只有 FTS5 工作记忆，还没有实体、关系和跨会话事实图谱。
+3. **语义向量记忆缺失**：目前已有 FTS5 和 SQLite 图记忆，但还没有向量相似检索来弥补关键词召回不足。
 
 ## 六、当前任务队列
 
@@ -240,8 +241,15 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 合并与激活：`PYTHONPATH=python python -c 'from yizutt_agi.skills import SkillStore; import tempfile, json; td=tempfile.TemporaryDirectory(); s=SkillStore(td.name); p1=s.save_skill("Summarize Repo", "Summarize a repository", ["Read the README", "Identify modules", "Return a concise summary"], "{}"); p2=s.save_skill("summarize-repo", "Summarize a repository", ["Read the README", "Return a concise summary", "Mention saved memory"], "{}"); items=s.list_skills(); print(json.dumps({"same_path": str(p1)==str(p2), "count": len(items), "status": items[0]["status"], "replay": items[0]["replay_check"], "context": s.skill_context("summarize repository")}, ensure_ascii=False)); td.cleanup()'`
 - 草稿拒绝召回：`PYTHONPATH=python python -c 'from yizutt_agi.skills import SkillStore; import tempfile, json; td=tempfile.TemporaryDirectory(); s=SkillStore(td.name); s.save_skill("weak", "too weak", ["Do it"], "{}"); item=s.list_skills()[0]; print(json.dumps({"status": item["status"], "replay": item["replay_check"], "context": s.skill_context("weak")}, ensure_ascii=False)); td.cleanup()'`
 
-- **P3-2 当前执行：Graph Memory（知识图谱）**：在 FTS5 之上增加实体和关系存储，支持跨会话的偏好、事实和项目关联查询。
-- **P3-3 向量记忆层**：引入本地向量引擎（FAISS 或 usearch），支持语义相似检索，弥补纯关键词匹配的不足。
+- **P3-2 已完成：Graph Memory（知识图谱）**：在 FTS5 之上增加实体和关系存储，支持跨会话的偏好、事实和项目关联查询。
+
+**完成情况**：已在 `python/yizutt_agi/memory.py` 中增加 `graph_entities` 和 `graph_relations` SQLite 表，以及 `upsert_entity()`、`add_relation()`、`search_graph()`、`graph_context()` API。`append_message()` 会通过轻量规则抽取用户偏好和项目技术事实，例如 `I prefer Rust...`、`Project Nexus uses SQLite...`。`executor.py` 和 `real_loop.py` 会在普通 FTS5 记忆上下文后追加命中的图谱上下文。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py`
+- 图谱写入与查询：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import tempfile, json; td=tempfile.TemporaryDirectory(); mem=WorkingMemory(td.name+"/work.sqlite3"); mem.append_message("s1", "user", "I prefer Rust for runtime design."); mem.append_message("s2", "user", "Project Nexus uses SQLite for memory."); print(json.dumps({"rust": mem.search_graph("Rust runtime", 5), "sqlite": mem.graph_context("Nexus SQLite", 5)}, ensure_ascii=False)); mem.close(); td.cleanup()'`
+
+- **P3-3 当前执行：向量记忆层**：引入本地向量引擎（FAISS 或 usearch），支持语义相似检索，弥补纯关键词匹配的不足。
 - **P3-4 训练数据收集与质量评分**：自动筛选高质量执行轨迹存入训练缓冲区，为未来 LoRA 微调做准备（不自动训练，仅收集）。
 - **P3-5 gRPC 流式 Trace API**：将当前一元返回改为 server-streaming，让调用方可实时观察 Agent 思考、工具调用和最终输出。
 
