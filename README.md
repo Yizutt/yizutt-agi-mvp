@@ -26,6 +26,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - Minimal MCP stdio client exposed as a gated `mcp_call` executor tool.
 - Skill package installer with `yizutt skill install <path-or-url>`.
 - Team memory bundle export/import for sharing memory and skills across agent workspaces.
+- Skill workflow composer that turns matching installed skills into a draft `WORKFLOW.md`.
 
 ## Repository Layout
 
@@ -240,6 +241,16 @@ Manual check:
 
 `PYTHONPATH=python python -m yizutt_agi.team_sync import --bundle .yizutt/team-test/team.zip --memory-path .yizutt/team-test/dest.sqlite3 --skills-root .yizutt/team-test/dest-skills`
 
+## Skill Workflows
+
+`skill_composer.py` discovers installed skills that match a goal and writes a draft `WORKFLOW.md` with an ordered skill chain plus an execution template.
+
+Manual check:
+
+`PYTHONPATH=python python -c 'from yizutt_agi.skills import SkillStore; s=SkillStore(".yizutt/compose-test/skills"); s.save_skill("read-readme", "Read README project documentation", ["Open README.md", "Extract project details"], "{}"); s.save_skill("summarize-architecture", "Summarize runtime architecture", ["Read gathered details", "Write concise architecture summary"], "{}")'`
+
+`PYTHONPATH=python python -m yizutt_agi.skill_composer compose --goal "Read README and summarize runtime architecture" --skills-root .yizutt/compose-test/skills --workflows-root .yizutt/compose-test/workflows`
+
 ## Verified Behavior
 
 GitHub Actions runs the core CI checks on push to `main` and on pull requests: `cargo check --workspace --locked`, `cargo build --workspace --locked`, and `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`.
@@ -262,6 +273,7 @@ The current prototype has been run locally with:
 - Skill replay checks, draft rejection, and same-name skill merge behavior
 - Local skill package install and list commands
 - Team bundle export/import for shared memory and skills
+- Skill workflow composition into draft `WORKFLOW.md`
 - Active health checks for healthy workers, sidecar import failures, and task-level error replies
 - Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`
 - SQLite graph memory extraction and cross-session graph lookup

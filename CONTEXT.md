@@ -31,6 +31,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **MCP stdio 工具接入**：新增 `mcp_client.py` 和受控 `mcp_call` 工具，默认拒绝，只有 `allow_mcp=true` 且显式配置 `mcp_servers` 时才可调用。
 - **技能包安装器**：新增 `skill_market.py`、`yizutt` Python 入口和 `examples/skills/echo-skill` 包格式示例，支持从本地路径或 URL 安装技能。
 - **团队记忆同步**：新增 `team_sync.py`，可导出/导入包含记忆消息和技能包的 zip bundle，在多个 Agent 工作区之间共享团队记忆。
+- **技能工作流组合**：新增 `skill_composer.py` 和 `yizutt-compose` 入口，可按目标匹配已安装技能并生成 `WORKFLOW.md` 草稿。
 
 ## 三、关键文件与模块
 
@@ -58,9 +59,9 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 ## 五、当前主要短板（需后续开发）
 
-1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
+1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划和流式 trace，但还没有持久队列和真正的并行子任务调度。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **跨技能自动编排不足**：还不能从已有技能中自动发现可组合的技能链。
+3. **下一阶段待定**：当前任务队列已完成，后续可转入真实用户场景打磨、Web 面板流式 trace、生产沙箱或远程 Worker。
 
 ## 六、当前任务队列
 
@@ -236,7 +237,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 记忆查询：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import json; mem=WorkingMemory(); print(json.dumps(mem.search_text("local mock README", limit=3), ensure_ascii=False, indent=2)); mem.close()'`
 - 技能检查：`rg --files .yizutt/skills | rg "e2e-local-mock|SKILL.md"`
 
-### P3 待执行（记忆与进化深化）
+### P3 已完成（记忆与进化深化）
 
 - **P3-1 已完成：技能质量验证与防膨胀**：保存技能前用简单 replay 验证可重复性，相似技能自动去重/合并，引入“草稿→验证→激活”状态机。
 
@@ -282,7 +283,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 终端 2：`PYTHONPATH=python YIZUTT_LOCAL_MODEL_URL=http://127.0.0.1:50990 target/debug/yizutt-runtime run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 2`
 - 终端 3：`target/debug/yizutt-runtime submit --stream --addr http://127.0.0.1:50200 --session stream-local --task "Use the read_file tool to read README.md, then summarize the project in one sentence." --context-json '{"provider":"local","max_tool_steps":2,"skill_name":"stream-local-mock"}'`
 
-### P4 待执行（生态与协作）
+### P4 已完成（生态与协作）
 
 - **P4-1 已完成：MCP 协议支持**：在模型网关或 Agent 运行时增加 MCP 客户端，使 Yizutt 能直接调用标准化外部工具（文件系统、数据库、代码解释器等）。
 
@@ -314,7 +315,18 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 验证记忆：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import json; mem=WorkingMemory(".yizutt/team-test/dest.sqlite3"); print(json.dumps({"hits": len(mem.search_text("Rust team runtime", 5)), "graph": mem.graph_context("Rust team", 5)}, ensure_ascii=False)); mem.close()'`
 - 验证技能：`PYTHONPATH=python python -m yizutt_agi.skill_market skill list --skills-root .yizutt/team-test/dest-skills`
 
-- **P4-4 当前执行：跨技能组合与自动化工作流**：从多个独立技能中自动发现可串联的“技能链”，生成复合模板。
+- **P4-4 已完成：跨技能组合与自动化工作流**：从多个独立技能中自动发现可串联的“技能链”，生成复合模板。
+
+**完成情况**：已新增 `python/yizutt_agi/skill_composer.py` 和 `yizutt-compose` Python 入口。组合器会读取已安装技能，按目标 token overlap 评分，选择匹配技能链，并在 `.yizutt/workflows/<name>/WORKFLOW.md` 写入草稿 workflow，包含目标、技能链、匹配分、技能路径和执行模板。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
+- 构造技能：`PYTHONPATH=python python -c 'from yizutt_agi.skills import SkillStore; s=SkillStore(".yizutt/compose-test/skills"); s.save_skill("read-readme", "Read README project documentation", ["Open README.md", "Extract project details"], "{}"); s.save_skill("summarize-architecture", "Summarize runtime architecture", ["Read gathered details", "Write concise architecture summary"], "{}")'`
+- 组合 workflow：`PYTHONPATH=python python -m yizutt_agi.skill_composer compose --goal "Read README and summarize runtime architecture" --skills-root .yizutt/compose-test/skills --workflows-root .yizutt/compose-test/workflows`
+
+### 当前任务状态
+
+截至本次更新，P0 到 P4 队列全部完成。下一轮建议优先选择一个真实使用场景做纵向打磨，而不是继续横向加模块。
 
 ## 七、常用开发命令
 
