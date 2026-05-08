@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Yizutt AGI Panel</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --surface-alt: #eef2f7;
+      --text: #17202a;
+      --muted: #637083;
+      --line: #d9e0ea;
+      --accent: #146c63;
+      --accent-strong: #0c514a;
+      --danger: #b42318;
+      --ok: #147a3f;
+      --warn: #a15c07;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.5;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      border: 0;
+      border-radius: 6px;
+      background: var(--accent);
+      color: #ffffff;
+      cursor: pointer;
+      min-height: 38px;
+      padding: 0 14px;
+      white-space: nowrap;
+    }
+
+    button.secondary {
+      background: #253244;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    input,
+    textarea {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      color: var(--text);
+      background: #ffffff;
+      padding: 10px 12px;
+    }
+
+    textarea {
+      min-height: 134px;
+      resize: vertical;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    pre {
+      margin: 0;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 13px;
+      line-height: 1.45;
+      color: #26313f;
+    }
+
+    .shell {
+      min-height: 100vh;
+      display: grid;
+      grid-template-rows: auto 1fr;
+    }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--line);
+    }
+
+    .topbar-inner {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 16px 20px;
+      display: grid;
+      grid-template-columns: 1fr minmax(260px, 520px) auto;
+      gap: 14px;
+      align-items: end;
+    }
+
+    .brand {
+      display: grid;
+      gap: 2px;
+    }
+
+    .brand h1 {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    .brand span,
+    .status-line {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .content {
+      max-width: 1240px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 18px 20px 28px;
+      display: grid;
+      gap: 16px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      min-width: 0;
+    }
+
+    .panel-head {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .panel-head h2 {
+      margin: 0;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .panel-body {
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .output {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: var(--surface-alt);
+      min-height: 150px;
+      max-height: 420px;
+      overflow: auto;
+      padding: 12px;
+    }
+
+    .workers,
+    .list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .item {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #ffffff;
+      padding: 10px 12px;
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .item-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      align-items: center;
+      font-weight: 650;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+
+    .badge {
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      background: var(--surface-alt);
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .badge.ok {
+      color: var(--ok);
+      background: #e8f5ee;
+    }
+
+    .badge.warn {
+      color: var(--warn);
+      background: #fff4df;
+    }
+
+    .badge.error {
+      color: var(--danger);
+      background: #fef0ef;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .error {
+      color: var(--danger);
+    }
+
+    @media (max-width: 860px) {
+      .topbar-inner,
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .topbar-inner {
+        align-items: stretch;
+      }
+
+      button {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <h1>Yizutt AGI Panel</h1>
+          <span>本地 Runtime 控制面板</span>
+        </div>
+        <label>
+          Runtime 地址
+          <input id="runtimeAddr" value="http://127.0.0.1:50200" autocomplete="off">
+        </label>
+        <button id="refreshAll" class="secondary" type="button">刷新</button>
+      </div>
+    </header>
+
+    <main class="content">
+      <div class="status-line" id="statusLine">正在加载面板配置...</div>
+
+      <section class="grid">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>提交任务</h2>
+            <span class="badge" id="submitState">空闲</span>
+          </div>
+          <div class="panel-body">
+            <label>
+              Session
+              <input id="sessionId" value="panel" autocomplete="off">
+            </label>
+            <label>
+              任务描述
+              <textarea id="taskInput" placeholder="例如：总结这个项目当前架构，并指出下一步最小改动"></textarea>
+            </label>
+            <label>
+              Context JSON
+              <input id="contextJson" value="{}" autocomplete="off">
+            </label>
+            <div class="actions">
+              <button id="submitTask" type="button">提交</button>
+              <button id="clearOutput" class="secondary" type="button">清空输出</button>
+            </div>
+            <div class="output">
+              <pre id="taskOutput">等待任务提交。</pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>Runtime 状态</h2>
+            <span class="badge" id="runtimeBadge">未知</span>
+          </div>
+          <div class="panel-body">
+            <div class="workers" id="workers"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="panel">
+          <div class="panel-head">
+            <h2>最近记忆</h2>
+            <span class="badge" id="memoryBadge">未加载</span>
+          </div>
+          <div class="panel-body">
+            <div class="list" id="memoryList"></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <h2>技能摘要</h2>
+            <span class="badge" id="skillsBadge">未加载</span>
+          </div>
+          <div class="panel-body">
+            <div class="list" id="skillsList"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const els = {
+      runtimeAddr: document.querySelector("#runtimeAddr"),
+      refreshAll: document.querySelector("#refreshAll"),
+      statusLine: document.querySelector("#statusLine"),
+      submitState: document.querySelector("#submitState"),
+      sessionId: document.querySelector("#sessionId"),
+      taskInput: document.querySelector("#taskInput"),
+      contextJson: document.querySelector("#contextJson"),
+      submitTask: document.querySelector("#submitTask"),
+      clearOutput: document.querySelector("#clearOutput"),
+      taskOutput: document.querySelector("#taskOutput"),
+      runtimeBadge: document.querySelector("#runtimeBadge"),
+      workers: document.querySelector("#workers"),
+      memoryBadge: document.querySelector("#memoryBadge"),
+      memoryList: document.querySelector("#memoryList"),
+      skillsBadge: document.querySelector("#skillsBadge"),
+      skillsList: document.querySelector("#skillsList")
+    };
+
+    const savedRuntime = localStorage.getItem("yizutt.runtimeAddr");
+    if (savedRuntime) {
+      els.runtimeAddr.value = savedRuntime;
+    }
+
+    function runtimeAddr() {
+      const value = els.runtimeAddr.value.trim() || "http://127.0.0.1:50200";
+      localStorage.setItem("yizutt.runtimeAddr", value);
+      return value;
+    }
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        headers: {"Content-Type": "application/json"},
+        ...options
+      });
+      const data = await response.json();
+      if (!response.ok || data.ok === false) {
+        throw new Error(data.error || `HTTP ${response.status}`);
+      }
+      return data;
+    }
+
+    function setBadge(el, text, kind = "") {
+      el.className = `badge ${kind}`.trim();
+      el.textContent = text;
+    }
+
+    function item(title, meta, body = "") {
+      const node = document.createElement("div");
+      node.className = "item";
+      const safeBody = body ? `<pre>${escapeHtml(body)}</pre>` : "";
+      node.innerHTML = `
+        <div class="item-title">
+          <span>${escapeHtml(title)}</span>
+        </div>
+        <div class="meta">${escapeHtml(meta)}</div>
+        ${safeBody}
+      `;
+      return node;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    async function loadConfig() {
+      const data = await api("/api/config");
+      if (!savedRuntime && data.runtime_addr) {
+        els.runtimeAddr.value = data.runtime_addr;
+      }
+      els.statusLine.textContent = `面板已连接本地代理，记忆库：${data.memory_path}`;
+    }
+
+    async function refreshStatus() {
+      setBadge(els.runtimeBadge, "检查中");
+      els.workers.innerHTML = "";
+      try {
+        const data = await api(`/api/status?runtime_addr=${encodeURIComponent(runtimeAddr())}`);
+        const workers = data.workers || [];
+        setBadge(els.runtimeBadge, `${workers.length} workers`, "ok");
+        if (!workers.length) {
+          els.workers.append(item("无 Worker", "Runtime 已响应，但没有返回 Worker。"));
+          return;
+        }
+        for (const worker of workers) {
+          const healthy = worker.healthy ? "healthy" : "unhealthy";
+          const meta = `${worker.address} · inflight ${worker.inflight}`;
+          els.workers.append(item(`${worker.worker_id} · ${healthy}`, meta));
+        }
+      } catch (err) {
+        setBadge(els.runtimeBadge, "不可用", "error");
+        els.workers.append(item("Runtime 不可用", err.message));
+      }
+    }
+
+    async function refreshMemory() {
+      els.memoryList.innerHTML = "";
+      try {
+        const data = await api("/api/memory?limit=12");
+        const items = data.items || [];
+        setBadge(els.memoryBadge, `${items.length} 条`, data.exists ? "ok" : "warn");
+        if (!items.length) {
+          els.memoryList.append(item("暂无记忆", data.exists ? "数据库为空。" : "还没有创建工作记忆数据库。"));
+          return;
+        }
+        for (const msg of items) {
+          const created = msg.created_at ? new Date(msg.created_at * 1000).toLocaleString() : "";
+          els.memoryList.append(item(`${msg.role} · ${msg.session_id}`, created, msg.content));
+        }
+      } catch (err) {
+        setBadge(els.memoryBadge, "错误", "error");
+        els.memoryList.append(item("记忆读取失败", err.message));
+      }
+    }
+
+    async function refreshSkills() {
+      els.skillsList.innerHTML = "";
+      try {
+        const data = await api("/api/skills?limit=12");
+        const items = data.items || [];
+        setBadge(els.skillsBadge, `${items.length} 个`, data.exists ? "ok" : "warn");
+        if (!items.length) {
+          els.skillsList.append(item("暂无技能", data.exists ? "技能目录为空。" : "还没有创建技能目录。"));
+          return;
+        }
+        for (const skill of items) {
+          const updated = skill.updated_at ? new Date(skill.updated_at * 1000).toLocaleString() : "";
+          const meta = `${updated} · ${skill.path}`;
+          els.skillsList.append(item(skill.name, meta, skill.description || skill.preview));
+        }
+      } catch (err) {
+        setBadge(els.skillsBadge, "错误", "error");
+        els.skillsList.append(item("技能读取失败", err.message));
+      }
+    }
+
+    async function refreshAll() {
+      await Promise.allSettled([refreshStatus(), refreshMemory(), refreshSkills()]);
+    }
+
+    async function submitTask() {
+      const task = els.taskInput.value.trim();
+      if (!task) {
+        els.taskOutput.textContent = "请先输入任务描述。";
+        return;
+      }
+      setBadge(els.submitState, "执行中", "warn");
+      els.submitTask.disabled = true;
+      els.taskOutput.textContent = "任务已提交，等待 Runtime 返回。";
+      try {
+        const data = await api("/api/submit", {
+          method: "POST",
+          body: JSON.stringify({
+            runtime_addr: runtimeAddr(),
+            session_id: els.sessionId.value.trim() || "panel",
+            task,
+            context_json: els.contextJson.value.trim() || "{}"
+          })
+        });
+        setBadge(els.submitState, "完成", "ok");
+        els.taskOutput.textContent = JSON.stringify(data.reply, null, 2);
+        await Promise.allSettled([refreshStatus(), refreshMemory(), refreshSkills()]);
+      } catch (err) {
+        setBadge(els.submitState, "失败", "error");
+        els.taskOutput.textContent = err.message;
+      } finally {
+        els.submitTask.disabled = false;
+      }
+    }
+
+    els.refreshAll.addEventListener("click", refreshAll);
+    els.submitTask.addEventListener("click", submitTask);
+    els.clearOutput.addEventListener("click", () => {
+      els.taskOutput.textContent = "等待任务提交。";
+      setBadge(els.submitState, "空闲");
+    });
+    els.runtimeAddr.addEventListener("change", refreshStatus);
+
+    loadConfig()
+      .catch((err) => {
+        els.statusLine.textContent = err.message;
+        els.statusLine.className = "status-line error";
+      })
+      .finally(refreshAll);
+  </script>
+</body>
+</html>

@@ -17,6 +17,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **技能文件存储**：任务执行完成后可将成功路径保存为 `SKILL.md`。
 - **工具调用循环**：`executor.py` 支持模型返回 `tool_calls`，执行受控工具后继续下一轮模型调用。
 - **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
+- **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务、查看最近记忆和技能摘要。
 
 ## 三、关键文件与模块
 
@@ -28,6 +29,8 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 | 模型网关 | `python/yizutt_agi/model_gateway.py` | 多厂商 API 统一调用，启发式路由 |
 | 工作记忆 | `python/yizutt_agi/memory.py` | SQLite + FTS5 双索引存储与检索 |
 | 技能存储 | `python/yizutt_agi/skills.py` | 技能文件的保存和加载 |
+| 本地面板服务 | `python/yizutt_agi/panel.py` | 提供 HTTP 面板 API，代理 Runtime CLI，并读取记忆和技能摘要 |
+| 本地面板页面 | `web/panel/index.html` | 浏览器 UI，用于查看状态、提交任务、查看记忆和技能 |
 | 离线闭环测试 | `python/yizutt_agi/real_loop.py` | 不依赖 Runtime 的端到端验证脚本 |
 
 ## 四、架构决策
@@ -48,9 +51,9 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 ## 六、当前任务队列
 
-执行规则：按优先级从 P0 到 P2 顺序执行。完成一个任务后，同步第二、三、五、六节，并把下一个未完成任务标记为“当前执行”。
+执行规则：按优先级从 P0 到 P4 顺序执行。完成一个任务后，同步第二、三、五、六节，并把下一个未完成任务标记为“当前执行”。
 
-### P0-0 当前执行：增加 Wed 面板
+### P0-0 已完成：增加 Wed 面板
 
 **目标**：为 Yizutt AGI 增加一个最小可运行的本地 Wed 面板，用于查看 Runtime 状态、提交任务、查看任务 trace、查看记忆和技能摘要，作为后续人机协作入口。
 
@@ -71,7 +74,16 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 **非目标**：不做账号系统；不做远程云部署；不做复杂权限管理；不做完整任务编排 UI。
 
-### P0-1 待执行：实现最小 Leader/Orchestrator 任务分解能力
+**完成情况**：已新增 `python/yizutt_agi/panel.py` 和 `web/panel/index.html`，面板通过本地 HTTP API 代理现有 Runtime CLI，可执行状态查询、任务提交、最近记忆读取和技能摘要读取。
+
+**手动验证命令**：
+- `cargo build`
+- `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`
+- `RUST_LOG=info target/debug/yizutt-runtime run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 4`
+- `PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200`
+- 浏览器打开 `http://127.0.0.1:50280`，点击刷新查看 Worker，输入任务后点击提交。
+
+### P0-1 当前执行：实现最小 Leader/Orchestrator 任务分解能力
 
 **目标**：在不重写 Runtime 架构的前提下，让复杂任务先生成结构化子任务计划，再由现有 Worker/sidecar 通路逐步执行或返回明确计划。
 
@@ -165,6 +177,21 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 示例不要求暴露真实 API key。
 - 明确说明生成物位于 `.yizutt/` 且不会提交。
 
+### P3 待执行（记忆与进化深化）
+
+- **P3-1 技能质量验证与防膨胀**：保存技能前用简单 replay 验证可重复性，相似技能自动去重/合并，引入“草稿→验证→激活”状态机。
+- **P3-2 Graph Memory（知识图谱）**：在 FTS5 之上增加实体和关系存储，支持跨会话的偏好、事实和项目关联查询。
+- **P3-3 向量记忆层**：引入本地向量引擎（FAISS 或 usearch），支持语义相似检索，弥补纯关键词匹配的不足。
+- **P3-4 训练数据收集与质量评分**：自动筛选高质量执行轨迹存入训练缓冲区，为未来 LoRA 微调做准备（不自动训练，仅收集）。
+- **P3-5 gRPC 流式 Trace API**：将当前一元返回改为 server-streaming，让调用方可实时观察 Agent 思考、工具调用和最终输出。
+
+### P4 待执行（生态与协作）
+
+- **P4-1 MCP 协议支持**：在模型网关或 Agent 运行时增加 MCP 客户端，使 Yizutt 能直接调用标准化外部工具（文件系统、数据库、代码解释器等）。
+- **P4-2 技能市场与社区共享**：定义技能包标准，支持 `yizutt skill install <url>` 安装别人分享的技能。
+- **P4-3 多 Agent 会话协作**：多个 Agent 实例可同步共享记忆和技能变更，实现“团队记忆”。
+- **P4-4 跨技能组合与自动化工作流**：从多个独立技能中自动发现可串联的“技能链”，生成复合模板。
+
 ## 七、常用开发命令
 
 ```bash
@@ -179,6 +206,9 @@ cargo run -p yizutt-runtime -- submit --task "你的任务描述" --addr http://
 
 # 查看状态
 cargo run -p yizutt-runtime -- status --addr http://127.0.0.1:50200
+
+# 启动本地 Wed/Web 面板
+PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200
 
 # Python 离线闭环测试
 python -m yizutt_agi.real_loop

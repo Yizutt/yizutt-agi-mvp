@@ -16,6 +16,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - SQLite FTS5 working memory with extra tokenized search for Chinese and English queries.
 - Skill persistence as `SKILL.md` files.
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
+- Local Web panel for Runtime status, task submission, recent memory, and skill summaries.
 
 ## Repository Layout
 
@@ -25,8 +26,10 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - `python/yizutt_agi/model_gateway.py` provides one model gateway interface.
 - `python/yizutt_agi/memory.py` stores cross-session working memory in SQLite FTS5.
 - `python/yizutt_agi/skills.py` stores reusable skills as `SKILL.md` files.
+- `python/yizutt_agi/panel.py` serves the local Web panel and proxies panel API calls to the runtime CLI.
 - `python/yizutt_agi/real_loop.py` runs one direct model-memory-skill loop without starting the Rust runtime.
 - `python/yizutt_agi/client.py` calls the Rust runtime CLI from Python.
+- `web/panel/index.html` is the browser UI for the local panel.
 
 ## Install
 
@@ -53,6 +56,12 @@ Submit a task from another terminal:
 Check pool status:
 
 `target/debug/yizutt-runtime status`
+
+Start the local Web panel:
+
+`PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200`
+
+Open `http://127.0.0.1:50280` in a browser. The panel lets you edit the Runtime address, inspect workers, submit a task, and view recent memory and skills. Model API keys stay in the server environment and are not exposed to the browser.
 
 Run the Python demo after the runtime is running:
 
