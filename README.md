@@ -18,6 +18,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
 - Local Web panel for Runtime status, task submission, recent memory, skill summaries, and language switching.
 - Minimal Leader/Orchestrator planning that emits structured `plan_created` trace events for complex tasks.
+- Audited tool policy with path allowlists, command allowlists, and default denial for writes, commands, and internal directories.
 
 ## Repository Layout
 
@@ -119,6 +120,22 @@ Complex tasks can ask the Python sidecar to create a structured subtask plan bef
 
 The returned trace includes a `plan_created` event. Each plan item includes `id`, `title`, `objective`, and `status`. By default the sidecar returns a reusable `plan_only` JSON result. To execute subtasks sequentially through the existing tool loop, pass `"execute_plan": true` in `context_json`.
 
+## Tool Security
+
+The Python sidecar can run `list_dir`, `read_file`, `write_file`, and `run_command` when a model returns structured `tool_calls`. Tool execution is policy gated before any file or process action.
+
+By default, reads are confined to the project root, hidden/internal paths such as `.git`, `.yizutt`, `__pycache__`, and `target` are denied, file writes are denied, and command execution is denied. `context.allowed_paths` narrows readable or writable paths to specific project-relative directories. `write_file` additionally requires `context.allow_file_write=true`. `run_command` requires both `context.allow_commands=true` and an executable whitelist such as `context.allowed_commands=["python"]`.
+
+Tool trace events avoid raw sensitive arguments. `tool_call` records `arguments_summary`, and `tool_result` records `tool`, `ok`, `allowed`, `reason`, `arguments_summary`, and the result text.
+
+Manual policy checks:
+
+`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; print(json.dumps(execute_tool("read_file", {"path": ".yizutt/memory/work.sqlite3"}, {}), ensure_ascii=False))'`
+
+`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; print(json.dumps(execute_tool("read_file", {"path": "README.md", "max_chars": 80}, {"allowed_paths":["."]}), ensure_ascii=False))'`
+
+`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; print(json.dumps(execute_tool("run_command", {"command":["python","-V"]}, {"allow_commands":True,"allowed_commands":["python"]}), ensure_ascii=False))'`
+
 ## Memory Search
 
 Working memory stores the original message text plus a tokenized FTS5 index for Chinese and English search. Chinese queries such as `技能`, `运行`, and `运行时` are routed through the tokenized field; English queries continue to work through both original content and token indexes.
@@ -139,6 +156,7 @@ The current prototype has been run locally with:
 - Local Web panel status, task submission, memory, skill APIs, and language switching
 - Leader/Orchestrator `plan_created` trace generation for a complex task
 - Tool loop execution with `read_file` returning the first README heading
+- Tool policy denial for hidden paths, writes, and commands, plus allowlisted command execution
 - Active health checks for healthy workers, sidecar import failures, and task-level error replies
 - Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`
 
@@ -149,7 +167,7 @@ This is not a production agent runtime yet. Worker sandboxes are local child pro
 ## Roadmap
 
 - Add gRPC server-streaming trace APIs.
-- Add structured tool execution and cancellation.
+- Add richer tool execution cancellation and sandboxing.
 - Add stronger worker isolation with containers or OS sandboxing.
 - Add graph memory and skill ranking.
 - Add CI for Rust and Python checks.

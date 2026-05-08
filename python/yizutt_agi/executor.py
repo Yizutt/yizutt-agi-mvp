@@ -36,7 +36,13 @@ Available tools:
 - list_dir: {"path": ".", "max_entries": 100}
 - read_file: {"path": "README.md", "max_chars": 12000}
 - write_file: {"path": "notes.txt", "content": "..."}; disabled unless context.allow_file_write is true or YIZUTT_EXECUTOR_ALLOW_WRITE=1
-- run_command: {"command": ["python", "-V"], "timeout_secs": 10, "max_output_chars": 12000}; disabled unless context.allow_commands is true or YIZUTT_EXECUTOR_ALLOW_COMMANDS=1
+- run_command: {"command": ["python", "-V"], "timeout_secs": 10, "max_output_chars": 12000}; disabled unless context.allow_commands is true and context.allowed_commands contains the executable name
+
+Security policy:
+- Paths are confined to context.project_root or the current working directory.
+- Hidden and internal directories are denied unless context.allow_internal_paths is true.
+- context.allowed_paths can narrow file tools to specific project-relative directories.
+- Commands are denied by default. Use context.allow_commands=true plus context.allowed_commands=["python"] for limited command access.
 
 When a tool is needed, return only JSON:
 {"tool_calls":[{"name":"read_file","arguments":{"path":"README.md"}}]}
@@ -46,6 +52,31 @@ When enough information is available, return only JSON:
 """.strip()
 
 DEFAULT_DENY_PATH_PARTS = {".git", ".yizutt", "__pycache__", "target"}
+DANGEROUS_COMMANDS = {
+    "bash",
+    "chmod",
+    "chown",
+    "curl",
+    "dd",
+    "git",
+    "kill",
+    "mkfs",
+    "mv",
+    "npm",
+    "pip",
+    "pkill",
+    "python",
+    "python3",
+    "reboot",
+    "rm",
+    "scp",
+    "sh",
+    "shutdown",
+    "ssh",
+    "su",
+    "sudo",
+    "wget",
+}
 ORCHESTRATION_HINTS = {
     "分解",
     "规划",
@@ -65,6 +96,10 @@ ORCHESTRATION_HINTS = {
     "subtask",
     "workflow",
 }
+
+
+class ToolPolicyError(Exception):
+    pass
 
 
 def emit(event_type: str, payload: str = "", **fields: Any) -> None:
@@ -366,13 +401,26 @@ def run_tool_loop(
                 arguments = call.get("arguments") or call.get("args") or {}
                 if not isinstance(arguments, dict):
                     arguments = {"value": arguments}
-                emit("tool_call", name, step=step_idx, arguments=arguments)
+                argument_summary = summarize_tool_arguments(name, arguments)
+                emit("tool_call", name, step=step_idx, arguments_summary=argument_summary)
                 result = execute_tool(name, arguments, context)
-                emit("tool_result", result["text"], step=step_idx, tool=name, ok=result["ok"])
+                emit(
+                    "tool_result",
+                    result["text"],
+                    step=step_idx,
+                    tool=name,
+                    ok=result["ok"],
+                    allowed=result.get("allowed", False),
+                    reason=result.get("reason", ""),
+                    arguments_summary=result.get("arguments_summary", argument_summary),
+                )
                 observation = {
                     "step": step_idx,
                     "tool": name,
                     "ok": result["ok"],
+                    "allowed": result.get("allowed", False),
+                    "reason": result.get("reason", ""),
+                    "arguments_summary": result.get("arguments_summary", argument_summary),
                     "result": result["text"],
                 }
                 observations.append(observation)
@@ -478,25 +526,43 @@ def clean_title(value: str) -> str:
 
 
 def execute_tool(name: str, arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    argument_summary = summarize_tool_arguments(name, arguments)
     try:
         if name == "list_dir":
-            return tool_list_dir(arguments, context)
-        if name == "read_file":
-            return tool_read_file(arguments, context)
-        if name == "write_file":
-            return tool_write_file(arguments, context)
-        if name == "run_command":
-            return tool_run_command(arguments, context)
-        return {"ok": False, "text": f"Unknown tool: {name}"}
+            result = tool_list_dir(arguments, context)
+        elif name == "read_file":
+            result = tool_read_file(arguments, context)
+        elif name == "write_file":
+            result = tool_write_file(arguments, context)
+        elif name == "run_command":
+            result = tool_run_command(arguments, context)
+        else:
+            result = _tool_result(False, False, "unknown_tool", f"Unknown tool: {name}")
+        result.setdefault("arguments_summary", argument_summary)
+        return result
+    except ToolPolicyError as exc:
+        return _tool_result(
+            False,
+            False,
+            "path_denied",
+            f"tool policy denied: {exc}",
+            argument_summary,
+        )
     except Exception as exc:
-        return {"ok": False, "text": f"{type(exc).__name__}: {exc}"}
+        return _tool_result(
+            False,
+            False,
+            "policy_or_execution_error",
+            f"{type(exc).__name__}: {exc}",
+            argument_summary,
+        )
 
 
 def tool_list_dir(arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     path = _resolve_tool_path(arguments.get("path", "."), context)
     max_entries = int(arguments.get("max_entries") or 100)
     if not path.is_dir():
-        return {"ok": False, "text": f"not a directory: {path}"}
+        return _tool_result(False, True, "path_allowed", f"not a directory: {path}")
     entries = []
     denied = set()
     if not _bool_setting(context, "allow_internal_paths", "YIZUTT_EXECUTOR_ALLOW_INTERNAL_PATHS"):
@@ -508,47 +574,64 @@ def tool_list_dir(arguments: dict[str, Any], context: dict[str, Any]) -> dict[st
         entries.append(f"{child.name}{suffix}")
         if len(entries) >= max_entries:
             break
-    return {"ok": True, "text": "\n".join(entries)}
+    return _tool_result(True, True, "path_allowed", "\n".join(entries))
 
 
 def tool_read_file(arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     path = _resolve_tool_path(arguments.get("path", ""), context)
     max_chars = int(arguments.get("max_chars") or 12000)
     if not path.is_file():
-        return {"ok": False, "text": f"not a file: {path}"}
+        return _tool_result(False, True, "path_allowed", f"not a file: {path}")
     text = path.read_text(encoding="utf-8", errors="replace")
-    return {"ok": True, "text": _truncate(text, max_chars)}
+    return _tool_result(True, True, "path_allowed", _truncate(text, max_chars))
 
 
 def tool_write_file(arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     if not _bool_setting(context, "allow_file_write", "YIZUTT_EXECUTOR_ALLOW_WRITE"):
-        return {"ok": False, "text": "write_file disabled; set context.allow_file_write=true or YIZUTT_EXECUTOR_ALLOW_WRITE=1"}
+        return _tool_result(
+            False,
+            False,
+            "write_disabled",
+            "write_file disabled; set context.allow_file_write=true or YIZUTT_EXECUTOR_ALLOW_WRITE=1",
+        )
     path = _resolve_tool_path(arguments.get("path", ""), context)
     content = str(arguments.get("content", ""))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
-    return {"ok": True, "text": f"wrote {len(content)} chars to {path}"}
+    return _tool_result(True, True, "write_allowed", f"wrote {len(content)} chars to {path}")
 
 
 def tool_run_command(arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
     if not _bool_setting(context, "allow_commands", "YIZUTT_EXECUTOR_ALLOW_COMMANDS"):
-        return {"ok": False, "text": "run_command disabled; set context.allow_commands=true or YIZUTT_EXECUTOR_ALLOW_COMMANDS=1"}
+        return _tool_result(
+            False,
+            False,
+            "commands_disabled",
+            "run_command disabled; set context.allow_commands=true and context.allowed_commands=[...]",
+        )
     command = arguments.get("command")
     if isinstance(command, str):
         command = shlex.split(command)
     if not isinstance(command, list) or not command:
-        return {"ok": False, "text": "command must be a non-empty string or list"}
+        return _tool_result(False, False, "invalid_command", "command must be a non-empty string or list")
     argv = [str(part) for part in command]
+    allowed, reason = _command_allowed(argv, context)
+    if not allowed:
+        return _tool_result(False, False, reason, f"run_command denied by policy: {reason}")
     timeout_secs = int(arguments.get("timeout_secs") or 10)
     max_output_chars = int(arguments.get("max_output_chars") or 12000)
-    completed = subprocess.run(
-        argv,
-        cwd=_project_root(context),
-        text=True,
-        capture_output=True,
-        timeout=timeout_secs,
-        check=False,
-    )
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=_project_root(context),
+            text=True,
+            capture_output=True,
+            timeout=timeout_secs,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        output = "\n".join(["timeout", exc.stdout or "", exc.stderr or ""])
+        return _tool_result(False, True, "command_timeout", _truncate(output, max_output_chars))
     text = "\n".join(
         [
             f"exit_code: {completed.returncode}",
@@ -558,7 +641,58 @@ def tool_run_command(arguments: dict[str, Any], context: dict[str, Any]) -> dict
             completed.stderr,
         ]
     )
-    return {"ok": completed.returncode == 0, "text": _truncate(text, max_output_chars)}
+    return _tool_result(completed.returncode == 0, True, "command_allowed", _truncate(text, max_output_chars))
+
+
+def _tool_result(
+    ok: bool,
+    allowed: bool,
+    reason: str,
+    text: str,
+    arguments_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    result = {
+        "ok": ok,
+        "allowed": allowed,
+        "reason": reason,
+        "text": text,
+    }
+    if arguments_summary is not None:
+        result["arguments_summary"] = arguments_summary
+    return result
+
+
+def summarize_tool_arguments(name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for key, value in arguments.items():
+        if key == "content":
+            summary["content_chars"] = len(str(value))
+        elif key == "command":
+            summary["command"] = _summarize_command(value)
+        elif isinstance(value, str):
+            summary[key] = _truncate(value, 200)
+        elif isinstance(value, (int, float, bool)) or value is None:
+            summary[key] = value
+        elif isinstance(value, list):
+            summary[key] = [_truncate(str(item), 80) for item in value[:8]]
+        else:
+            summary[key] = _truncate(str(value), 200)
+    if name == "write_file" and "content_chars" not in summary:
+        summary["content_chars"] = 0
+    return summary
+
+
+def _summarize_command(value: Any) -> list[str]:
+    if isinstance(value, str):
+        try:
+            parts = shlex.split(value)
+        except ValueError:
+            parts = [value]
+    elif isinstance(value, list):
+        parts = [str(part) for part in value]
+    else:
+        parts = [str(value)]
+    return [_truncate(part, 80) for part in parts[:12]]
 
 
 def _parse_json_object(raw: str) -> dict[str, Any] | None:
@@ -588,20 +722,54 @@ def _project_root(context: dict[str, Any]) -> Path:
 
 def _resolve_tool_path(value: Any, context: dict[str, Any]) -> Path:
     if not value:
-        raise ValueError("path is required")
+        raise ToolPolicyError("path is required")
     root = _project_root(context)
     candidate = Path(str(value)).expanduser()
     if not candidate.is_absolute():
         candidate = root / candidate
     resolved = candidate.resolve()
     if resolved != root and root not in resolved.parents:
-        raise ValueError(f"path escapes project root: {value}")
+        raise ToolPolicyError(f"path escapes project root: {value}")
+    allowed_roots = _allowed_path_roots(context, root)
+    if not any(resolved == allowed or allowed in resolved.parents for allowed in allowed_roots):
+        allowed_text = ", ".join(str(path.relative_to(root)) for path in allowed_roots)
+        raise ToolPolicyError(f"path outside allowed_paths: {value}; allowed: {allowed_text}")
     if not _bool_setting(context, "allow_internal_paths", "YIZUTT_EXECUTOR_ALLOW_INTERNAL_PATHS"):
         denied = {str(part) for part in context.get("deny_path_parts", DEFAULT_DENY_PATH_PARTS)}
         for part in resolved.relative_to(root).parts:
             if part.startswith(".") or part in denied:
-                raise ValueError(f"path uses denied internal segment: {part}")
+                raise ToolPolicyError(f"path uses denied internal segment: {part}")
     return resolved
+
+
+def _allowed_path_roots(context: dict[str, Any], root: Path) -> list[Path]:
+    values = _list_setting(context, "allowed_paths", "YIZUTT_EXECUTOR_ALLOWED_PATHS")
+    if not values:
+        values = ["."]
+    roots = []
+    for value in values:
+        candidate = Path(str(value)).expanduser()
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        resolved = candidate.resolve()
+        if resolved != root and root not in resolved.parents:
+            raise ToolPolicyError(f"allowed_path escapes project root: {value}")
+        roots.append(resolved)
+    return roots
+
+
+def _command_allowed(argv: list[str], context: dict[str, Any]) -> tuple[bool, str]:
+    executable = Path(argv[0]).name
+    allowed_commands = set(_list_setting(context, "allowed_commands", "YIZUTT_EXECUTOR_ALLOWED_COMMANDS"))
+    if not allowed_commands:
+        if executable in DANGEROUS_COMMANDS:
+            return False, "command_whitelist_required_for_dangerous_executable"
+        return False, "command_whitelist_required"
+    if argv[0] in allowed_commands or executable in allowed_commands:
+        return True, "command_allowed"
+    if executable in DANGEROUS_COMMANDS:
+        return False, "dangerous_command_not_whitelisted"
+    return False, "command_not_whitelisted"
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -617,6 +785,24 @@ def _bool_setting(context: dict[str, Any], key: str, env_name: str) -> bool:
             return value
         return str(value).lower() in {"1", "true", "yes", "on"}
     return os.getenv(env_name, "").lower() in {"1", "true", "yes", "on"}
+
+
+def _list_setting(context: dict[str, Any], key: str, env_name: str) -> list[str]:
+    if key in context:
+        value = context[key]
+    else:
+        value = os.getenv(env_name, "")
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return []
+        separator = "," if "," in raw else os.pathsep
+        return [part.strip() for part in raw.split(separator) if part.strip()]
+    if isinstance(value, (list, tuple, set)):
+        return [str(part).strip() for part in value if str(part).strip()]
+    return [str(value).strip()] if str(value).strip() else []
 
 
 def should_orchestrate(task: str, context: dict[str, Any]) -> bool:

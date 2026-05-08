@@ -16,6 +16,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **中文记忆检索**：双 FTS5 索引（原文字段 + 分词字段），解决了 SQLite 默认分词的中文 0 命中问题。
 - **技能文件存储**：任务执行完成后可将成功路径保存为 `SKILL.md`。
 - **工具调用循环**：`executor.py` 支持模型返回 `tool_calls`，执行受控工具后继续下一轮模型调用。
+- **工具安全审计**：工具执行默认拒绝写文件、命令执行和内部路径访问，支持 `allowed_paths` 与 `allowed_commands` 显式授权，并在 trace 中记录脱敏参数摘要、允许状态和拒绝原因。
 - **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
 - **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务、查看最近记忆和技能摘要，并支持全局语言短码切换，默认 `cnzh` 中文-简体，可切换繁体中文、英语、日语、韩语、阿拉伯语、俄语。
 - **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回。
@@ -42,13 +43,13 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **Worker 隔离机制**：每个 Worker 是独立子进程，有独立工作目录 `.yizutt/runtime/workers/<id>/`。
 - **内存数据非共享**：Worker 之间不直接共享内存状态，必要协作通过 Runtime 分配子任务。
 - **中文分词**：`memory.py` 写入时生成 tokens，查询时命中 `messages_tokens_fts`。
-- **受控工具执行**：`executor.py` 默认允许读目录和读文件，写文件与命令执行必须显式授权。
+- **受控工具执行**：`executor.py` 默认允许项目根目录内的读目录和读文件，但拒绝隐藏/内部目录；写文件必须显式开启 `allow_file_write`，命令必须同时开启 `allow_commands` 并命中 `allowed_commands` 白名单。
 - **gRPC 通信**：目前仅支持一元调用（请求-响应），流式 API 在 Roadmap 中。
 
 ## 五、当前主要短板（需后续开发）
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
-2. **安全沙箱薄弱**：无 cgroups 限制、无网络白名单、无操作审计。
+2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
 3. **项目缺少许可证**：目前法律上是 All Rights Reserved。
 
 ## 六、当前任务队列
@@ -137,7 +138,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - sidecar 失败探活：`YIZUTT_PYTHON=/bin/false target/debug/yizutt-runtime run --bind 127.0.0.1:50621 --worker-base-port 50640 --min-workers 1 --max-workers 1 --health-timeout-secs 2` 后执行 `target/debug/yizutt-runtime status --addr http://127.0.0.1:50621`，应看到 `healthy: false` 和 `last_error`。
 - 任务级错误不误杀 Worker：缺少 `YIZUTT_LOCAL_MODEL_URL` 时提交 `provider=local` 任务会返回 `status: "error"`，随后 `status` 仍显示 Worker `healthy: true`。
 
-### P1-1 当前执行：工具执行安全策略增强
+### P1-1 已完成：工具执行安全策略增强
 
 **目标**：在现有受控工具基础上增加更明确的安全策略，包括路径白名单、命令白名单、审计 trace 和危险操作默认拒绝。
 
@@ -151,7 +152,16 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - trace 中记录工具名、参数摘要、是否允许、执行结果。
 - 提供拒绝路径和允许路径的手动验证命令。
 
-### P1-2 待执行：添加开源许可证
+**完成情况**：已在 `python/yizutt_agi/executor.py` 中补强工具策略。`tool_call` 只记录 `arguments_summary`，不再输出原始 `content` 等敏感参数；`tool_result` 会记录 `tool`、`ok`、`allowed`、`reason`、`arguments_summary` 和结果文本。路径访问先限制在项目根目录内，再受 `allowed_paths` 限制，并默认拒绝 `.git`、`.yizutt`、`__pycache__`、`target` 以及其他隐藏路径。`write_file` 需要 `allow_file_write`；`run_command` 需要 `allow_commands=true` 且命中 `allowed_commands` 白名单。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`
+- 拒绝内部路径：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; print(json.dumps(execute_tool("read_file", {"path": ".yizutt/memory/work.sqlite3"}, {}), ensure_ascii=False))'`
+- 允许普通路径：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; print(json.dumps(execute_tool("read_file", {"path": "README.md", "max_chars": 80}, {"allowed_paths":["."]}), ensure_ascii=False))'`
+- 拒绝未授权命令：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; print(json.dumps(execute_tool("run_command", {"command":["python","-V"]}, {}), ensure_ascii=False))'`
+- 允许白名单命令：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; print(json.dumps(execute_tool("run_command", {"command":["python","-V"]}, {"allow_commands":True,"allowed_commands":["python"]}), ensure_ascii=False))'`
+
+### P1-2 当前执行：添加开源许可证
 
 **目标**：为公开仓库选择并添加许可证，消除 All Rights Reserved 状态。
 
