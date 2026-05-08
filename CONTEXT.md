@@ -46,9 +46,13 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 3. **安全沙箱薄弱**：无 cgroups 限制、无网络白名单、无操作审计。
 4. **项目缺少许可证**：目前法律上是 All Rights Reserved。
 
-## 六、当前任务
+## 六、当前任务队列
 
-**任务**：实现最小 Leader/Orchestrator 任务分解能力。目标是在不重写 Runtime 架构的前提下，让复杂任务先生成结构化子任务计划，再由现有 Worker/sidecar 通路逐步执行或返回明确计划。
+执行规则：按优先级从 P0 到 P2 顺序执行。完成一个任务后，同步第二、三、五、六节，并把下一个未完成任务标记为“当前执行”。
+
+### P0-1 当前执行：实现最小 Leader/Orchestrator 任务分解能力
+
+**目标**：在不重写 Runtime 架构的前提下，让复杂任务先生成结构化子任务计划，再由现有 Worker/sidecar 通路逐步执行或返回明确计划。
 
 **建议涉及文件**：
 - `proto/yizutt.proto`：如需要扩展请求/响应字段，先保持向后兼容。
@@ -66,11 +70,79 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - Python sidecar 的普通单任务路径和工具调用循环必须继续可用。
 - 提供手动验证命令：一个普通任务、一个复杂任务、一个工具调用任务。
 
-**非目标**：
-- 不做远程 Worker。
-- 不做持久队列。
-- 不做 gRPC streaming。
-- 不做复杂多 Agent 角色系统。
+**非目标**：不做远程 Worker；不做持久队列；不做 gRPC streaming；不做复杂多 Agent 角色系统。
+
+### P0-2 待执行：主动健康检查
+
+**目标**：让 WorkerPool 不只依赖静态 `healthy` 标记，而能主动探测 worker 和 Python sidecar 是否可用。
+
+**建议涉及文件**：
+- `crates/yizutt-runtime/src/main.rs`
+- `python/yizutt_agi/executor.py`
+- `README.md`、`README_CN.md`、`CONTEXT.md`
+
+**验收标准**：
+- `yizutt-runtime status` 能反映主动探活结果。
+- Worker 失效后能被标记为 unhealthy。
+- 探活失败不应导致 Runtime 崩溃。
+- 提供手动验证命令。
+
+### P1-1 待执行：工具执行安全策略增强
+
+**目标**：在现有受控工具基础上增加更明确的安全策略，包括路径白名单、命令白名单、审计 trace 和危险操作默认拒绝。
+
+**建议涉及文件**：
+- `python/yizutt_agi/executor.py`
+- `README.md`、`README_CN.md`、`CONTEXT.md`
+
+**验收标准**：
+- 默认拒绝写文件、执行命令、访问隐藏目录和内部目录。
+- 可通过 context 显式授权有限能力。
+- trace 中记录工具名、参数摘要、是否允许、执行结果。
+- 提供拒绝路径和允许路径的手动验证命令。
+
+### P1-2 待执行：添加开源许可证
+
+**目标**：为公开仓库选择并添加许可证，消除 All Rights Reserved 状态。
+
+**建议涉及文件**：
+- `LICENSE`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**验收标准**：
+- 仓库根目录存在 `LICENSE`。
+- README 明确说明许可证。
+- GitHub 能识别许可证类型。
+
+### P1-3 待执行：添加 CI
+
+**目标**：为 Rust 和 Python 的基础检查添加 GitHub Actions。
+
+**建议涉及文件**：
+- `.github/workflows/ci.yml`
+- `README.md`
+- `CONTEXT.md`
+
+**验收标准**：
+- CI 至少运行 `cargo check`、`cargo build`、`python -m py_compile python/yizutt_agi/*.py`。
+- PR 或 push 到 main 能触发。
+- README 增加 CI 状态说明或开发检查命令。
+
+### P2-1 待执行：补充端到端使用示例
+
+**目标**：把本地代理、Runtime 启动、任务提交、工具调用、记忆查询、技能文件生成串成一个可复制的 demo 流程。
+
+**建议涉及文件**：
+- `README.md`
+- `README_CN.md`
+- 可选：`examples/`
+
+**验收标准**：
+- 新用户可按文档跑通一次本地 mock 或真实代理 demo。
+- 示例不要求暴露真实 API key。
+- 明确说明生成物位于 `.yizutt/` 且不会提交。
 
 ## 七、常用开发命令
 
