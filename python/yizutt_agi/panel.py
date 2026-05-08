@@ -3,6 +3,7 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from http import HTTPStatus
@@ -10,6 +11,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
+
+from .i18n import SUPPORTED_LANGUAGE_CODES, resolve_language
 
 
 DEFAULT_RUNTIME_ADDR = "http://127.0.0.1:50200"
@@ -27,6 +30,7 @@ class PanelConfig:
     memory_path: Path
     skills_root: Path
     cli_timeout_secs: int
+    default_lang: str
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,6 +43,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--memory-path", default=os.getenv("YIZUTT_MEMORY_PATH", ""))
     parser.add_argument("--skills-root", default=os.getenv("YIZUTT_SKILLS_ROOT", ""))
     parser.add_argument("--cli-timeout-secs", type=int, default=180)
+    parser.add_argument(
+        "--lang",
+        default="",
+        help="Default UI language short code: cnzh, twzh, en, ja, ko, ar, ru. Defaults to cnzh.",
+    )
     args = parser.parse_args(argv)
 
     project_root = resolve_project_root(args.project_root)
@@ -52,11 +61,13 @@ def main(argv: list[str] | None = None) -> int:
         memory_path=Path(args.memory_path).expanduser() if args.memory_path else project_root / ".yizutt" / "memory" / "work.sqlite3",
         skills_root=Path(args.skills_root).expanduser() if args.skills_root else project_root / ".yizutt" / "skills",
         cli_timeout_secs=args.cli_timeout_secs,
+        default_lang=resolve_language(args.lang, argv0=sys.argv[0]),
     )
 
     server = ThreadingHTTPServer((config.bind, config.port), make_handler(config))
     print(f"Yizutt panel listening on http://{config.bind}:{config.port}", flush=True)
     print(f"Runtime default: {config.runtime_addr}", flush=True)
+    print(f"Language default: {config.default_lang}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -157,6 +168,8 @@ def api_config(config: PanelConfig) -> dict[str, Any]:
         "runtime_bin": config.runtime_bin,
         "memory_path": str(config.memory_path),
         "skills_root": str(config.skills_root),
+        "default_language": config.default_lang,
+        "supported_languages": list(SUPPORTED_LANGUAGE_CODES),
     }
 
 

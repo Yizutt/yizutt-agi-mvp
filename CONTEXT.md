@@ -17,7 +17,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **技能文件存储**：任务执行完成后可将成功路径保存为 `SKILL.md`。
 - **工具调用循环**：`executor.py` 支持模型返回 `tool_calls`，执行受控工具后继续下一轮模型调用。
 - **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
-- **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务、查看最近记忆和技能摘要，并支持简体中文、繁体中文、英语、日语、韩语、阿拉伯语、俄语切换。
+- **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务、查看最近记忆和技能摘要，并支持全局语言短码切换，默认 `cnzh` 中文-简体，可切换繁体中文、英语、日语、韩语、阿拉伯语、俄语。
 - **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回。
 
 ## 三、关键文件与模块
@@ -30,6 +30,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 | 模型网关 | `python/yizutt_agi/model_gateway.py` | 多厂商 API 统一调用，启发式路由 |
 | 工作记忆 | `python/yizutt_agi/memory.py` | SQLite + FTS5 双索引存储与检索 |
 | 技能存储 | `python/yizutt_agi/skills.py` | 技能文件的保存和加载 |
+| 语言解析 | `python/yizutt_agi/i18n.py` | 统一解析 `cnzh` 等语言短码、环境变量和 CLI 入口后缀 |
 | 本地面板服务 | `python/yizutt_agi/panel.py` | 提供 HTTP 面板 API，代理 Runtime CLI，并读取记忆和技能摘要 |
 | 本地面板页面 | `web/panel/index.html` | 浏览器 UI，用于查看状态、提交任务、查看记忆和技能 |
 | 离线闭环测试 | `python/yizutt_agi/real_loop.py` | 不依赖 Runtime 的端到端验证脚本 |
@@ -75,7 +76,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 **非目标**：不做账号系统；不做远程云部署；不做复杂权限管理；不做完整任务编排 UI。
 
-**完成情况**：已新增 `python/yizutt_agi/panel.py` 和 `web/panel/index.html`，面板通过本地 HTTP API 代理现有 Runtime CLI，可执行状态查询、任务提交、最近记忆读取和技能摘要读取。面板默认中文-简体，并可切换中文-繁体、英语、日语、韩语、阿拉伯语、俄语；阿拉伯语自动使用 RTL 布局。
+**完成情况**：已新增 `python/yizutt_agi/panel.py` 和 `web/panel/index.html`，面板通过本地 HTTP API 代理现有 Runtime CLI，可执行状态查询、任务提交、最近记忆读取和技能摘要读取。面板默认 `cnzh` 中文-简体，并可切换中文-繁体、英语、日语、韩语、阿拉伯语、俄语；阿拉伯语自动使用 RTL 布局。全局语言可通过 `--lang`、`YIZUTT_LANG` 或安装入口后缀 `yizutt-panel_cnzh` 设置。
 
 **手动验证命令**：
 - `cargo build`

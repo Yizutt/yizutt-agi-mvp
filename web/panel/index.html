@@ -298,8 +298,8 @@
         <label id="languageLabel">
           语言
           <select id="languageSelect">
-            <option value="zh-Hans">中文-简体</option>
-            <option value="zh-Hant">中文-繁体</option>
+            <option value="cnzh">中文-简体</option>
+            <option value="twzh">中文-繁体</option>
             <option value="en">English</option>
             <option value="ja">日本語</option>
             <option value="ko">한국어</option>
@@ -380,7 +380,7 @@
 
   <script>
     const LANGUAGES = {
-      "zh-Hans": {
+      cnzh: {
         htmlLang: "zh-CN",
         dir: "ltr",
         strings: {
@@ -432,7 +432,7 @@
           statusConnected: "面板已连接本地代理，记忆库：{path}"
         }
       },
-      "zh-Hant": {
+      twzh: {
         htmlLang: "zh-Hant",
         dir: "ltr",
         strings: {
@@ -778,7 +778,25 @@
 
     const savedRuntime = localStorage.getItem("yizutt.runtimeAddr");
     const savedLanguage = localStorage.getItem("yizutt.language");
-    let currentLanguage = LANGUAGES[savedLanguage] ? savedLanguage : "zh-Hans";
+    const LANGUAGE_ALIASES = {
+      cnzh: "cnzh",
+      "zh-cn": "cnzh",
+      "zh-hans": "cnzh",
+      zh: "cnzh",
+      cn: "cnzh",
+      twzh: "twzh",
+      "zh-tw": "twzh",
+      "zh-hant": "twzh",
+      hkzh: "twzh",
+      en: "en",
+      ja: "ja",
+      jp: "ja",
+      ko: "ko",
+      kr: "ko",
+      ar: "ar",
+      ru: "ru"
+    };
+    let currentLanguage = canonicalLanguage(savedLanguage) || "cnzh";
 
     if (savedRuntime) {
       els.runtimeAddr.value = savedRuntime;
@@ -786,9 +804,17 @@
 
     function t(key, vars = {}) {
       const strings = LANGUAGES[currentLanguage].strings;
-      const fallback = LANGUAGES["zh-Hans"].strings;
+      const fallback = LANGUAGES.cnzh.strings;
       const template = strings[key] || fallback[key] || key;
       return template.replace(/\{(\w+)\}/g, (_, name) => String(vars[name] ?? ""));
+    }
+
+    function canonicalLanguage(value) {
+      if (!value) {
+        return "";
+      }
+      const key = String(value).trim().toLowerCase().replaceAll("_", "-");
+      return LANGUAGES[key] ? key : (LANGUAGE_ALIASES[key] || "");
     }
 
     function setLabelText(label, text) {
@@ -895,6 +921,13 @@
       const data = await api("/api/config");
       if (!savedRuntime && data.runtime_addr) {
         els.runtimeAddr.value = data.runtime_addr;
+      }
+      if (!savedLanguage) {
+        const defaultLanguage = canonicalLanguage(data.default_language);
+        if (defaultLanguage && defaultLanguage !== currentLanguage) {
+          currentLanguage = defaultLanguage;
+          applyLanguage();
+        }
       }
       els.statusLine.dataset.loaded = "true";
       els.statusLine.dataset.memoryPath = data.memory_path;
@@ -1009,7 +1042,7 @@
     });
     els.runtimeAddr.addEventListener("change", refreshStatus);
     els.languageSelect.addEventListener("change", async () => {
-      currentLanguage = els.languageSelect.value;
+      currentLanguage = canonicalLanguage(els.languageSelect.value) || "cnzh";
       localStorage.setItem("yizutt.language", currentLanguage);
       applyLanguage();
       await refreshAll();
