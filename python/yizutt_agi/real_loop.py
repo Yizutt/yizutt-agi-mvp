@@ -121,6 +121,7 @@ def run_real_loop(
             {"kind": "model_result", "provider": selected_provider, "model": selected_model},
         )
         memory.ingest_trace(session_id, trace)
+        training_example = memory.record_training_example(session_id, task, result["answer"], trace)
         skill_path = _save_skill_with_fallback(
             skills,
             final_skill_name,
@@ -140,6 +141,7 @@ def run_real_loop(
             "skill_path": str(skill_path),
             "memory_path": str(Path(memory_path)),
             "memory_hits": len(hits),
+            "training_example": training_example,
             "trace": trace,
         }
     finally:

@@ -70,6 +70,7 @@ class WorkingMemory:
         self._init_token_triggers()
         self._init_graph_schema()
         self._init_vector_schema()
+        self._init_training_schema()
         self._backfill_vectors()
         self.db.commit()
 
@@ -155,6 +156,25 @@ class WorkingMemory:
               foreign key(message_id) references messages(id)
             );
             create index if not exists memory_vectors_created_idx on memory_vectors(created_at);
+            """
+        )
+
+    def _init_training_schema(self) -> None:
+        self.db.executescript(
+            """
+            create table if not exists training_examples(
+              id text primary key,
+              session_id text not null,
+              task text not null,
+              answer text not null,
+              trace_json text not null default '{}',
+              quality_score real not null,
+              accepted integer not null,
+              reasons_json text not null default '[]',
+              created_at integer not null
+            );
+            create index if not exists training_examples_score_idx on training_examples(quality_score);
+            create index if not exists training_examples_session_idx on training_examples(session_id);
             """
         )
 
@@ -400,6 +420,67 @@ class WorkingMemory:
         messages = self.search_vector(query, limit)
         return compact_context(messages)
 
+    def record_training_example(
+        self,
+        session_id: str,
+        task: str,
+        answer: str,
+        trace: dict,
+        threshold: float = 0.65,
+    ) -> dict:
+        quality = score_training_example(task, answer, trace)
+        example_id = str(uuid.uuid4())
+        now = int(time.time())
+        accepted = quality["score"] >= threshold
+        self.db.execute(
+            """
+            insert into training_examples(
+              id, session_id, task, answer, trace_json, quality_score, accepted, reasons_json, created_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                example_id,
+                session_id,
+                task,
+                answer,
+                json.dumps(trace, ensure_ascii=False),
+                quality["score"],
+                1 if accepted else 0,
+                json.dumps(quality["reasons"], ensure_ascii=False),
+                now,
+            ),
+        )
+        self.db.commit()
+        return {
+            "id": example_id,
+            "session_id": session_id,
+            "quality_score": quality["score"],
+            "accepted": accepted,
+            "reasons": quality["reasons"],
+            "created_at": now,
+        }
+
+    def training_examples(self, limit: int = 20, accepted_only: bool = False) -> list[dict]:
+        where = "where accepted = 1" if accepted_only else ""
+        rows = self.db.execute(
+            f"""
+            select id, session_id, task, answer, trace_json, quality_score, accepted, reasons_json, created_at
+            from training_examples
+            {where}
+            order by quality_score desc, created_at desc
+            limit ?
+            """,
+            (limit,),
+        ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["trace"] = json.loads(item.pop("trace_json") or "{}")
+            item["accepted"] = bool(item["accepted"])
+            item["reasons"] = json.loads(item.pop("reasons_json") or "[]")
+            result.append(item)
+        return result
+
     def close(self) -> None:
         self.db.close()
 
@@ -601,3 +682,30 @@ def cosine_similarity(left: dict[str, float], right: dict[str, float]) -> float:
     if len(left) > len(right):
         left, right = right, left
     return sum(weight * float(right.get(term, 0.0)) for term, weight in left.items())
+
+
+def score_training_example(task: str, answer: str, trace: dict) -> dict:
+    score = 0.0
+    reasons = []
+    if len(task.strip()) >= 12:
+        score += 0.15
+        reasons.append("task_has_context")
+    if len(answer.strip()) >= 40:
+        score += 0.25
+        reasons.append("answer_substantive")
+    if trace.get("provider") or trace.get("model"):
+        score += 0.15
+        reasons.append("model_recorded")
+    if not trace.get("error") and "error" not in answer.lower()[:80]:
+        score += 0.15
+        reasons.append("no_error_marker")
+    if trace.get("tool_steps") or trace.get("orchestration_plan"):
+        score += 0.15
+        reasons.append("execution_structure_recorded")
+    if trace.get("finished_at") and trace.get("started_at"):
+        score += 0.10
+        reasons.append("timing_recorded")
+    if len(answer.strip()) > 4000:
+        score -= 0.15
+        reasons.append("answer_too_large")
+    return {"score": max(0.0, min(1.0, round(score, 3))), "reasons": reasons}

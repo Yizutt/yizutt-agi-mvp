@@ -26,6 +26,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **端到端本地 Mock Demo**：`examples/local_mock_model.py` 可提供无 API key 的确定性模型端点，README 已给出 Runtime、工具调用、记忆查询和技能生成的完整流程。
 - **SQLite Graph Memory**：`memory.py` 在 FTS5 之外增加实体/关系表，自动抽取简单用户偏好和项目技术事实，支持跨会话图谱查询并向 executor/real_loop 注入图谱上下文。
 - **稀疏向量记忆**：`memory.py` 为每条消息持久化 `memory_vectors` 稀疏 token 向量，支持 cosine 相似检索，并向 executor/real_loop 注入 vector context。
+- **训练数据缓冲区**：成功执行轨迹会进入 SQLite `training_examples` 表，按简单质量规则评分并标记 accepted，为未来微调准备数据但不自动训练。
 
 ## 三、关键文件与模块
 
@@ -55,7 +56,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **训练数据质量层缺失**：执行轨迹还没有进入可评分、可筛选的训练缓冲区。
+3. **Trace 仍是一元返回**：调用方只能在任务结束后拿到聚合 trace，还不能实时观察工具调用和输出。
 
 ## 六、当前任务队列
 
@@ -258,8 +259,15 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py`
 - 向量检索：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import tempfile, json; td=tempfile.TemporaryDirectory(); mem=WorkingMemory(td.name+"/work.sqlite3"); mem.append_message("s1", "user", "Rust runtime workers schedule tasks locally"); mem.append_message("s2", "user", "Python skills store reusable execution steps"); hits=mem.search_vector("local task scheduler in Rust", limit=2); print(json.dumps({"top_session": hits[0]["session_id"], "top_score": round(hits[0]["score"], 3), "context": mem.vector_context("reusable Python skill", 2)}, ensure_ascii=False)); mem.close(); td.cleanup()'`
 
-- **P3-4 当前执行：训练数据收集与质量评分**：自动筛选高质量执行轨迹存入训练缓冲区，为未来 LoRA 微调做准备（不自动训练，仅收集）。
-- **P3-5 gRPC 流式 Trace API**：将当前一元返回改为 server-streaming，让调用方可实时观察 Agent 思考、工具调用和最终输出。
+- **P3-4 已完成：训练数据收集与质量评分**：自动筛选高质量执行轨迹存入训练缓冲区，为未来 LoRA 微调做准备（不自动训练，仅收集）。
+
+**完成情况**：已在 `python/yizutt_agi/memory.py` 中增加 `training_examples` SQLite 表、`record_training_example()`、`training_examples()` 和 `score_training_example()`。`executor.py` 与 `real_loop.py` 会在成功任务后记录训练样本，写入质量分、accepted 标记和原因列表。当前只收集候选数据，不触发 LoRA 或其他训练流程。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py`
+- 训练缓冲区：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import tempfile, json; td=tempfile.TemporaryDirectory(); mem=WorkingMemory(td.name+"/work.sqlite3"); trace={"provider":"local","model":"mock","started_at":1,"finished_at":2,"tool_steps":[{"tool":"read_file"}]}; item=mem.record_training_example("s1", "Summarize the runtime architecture", "This answer explains the runtime architecture with enough detail for reuse.", trace); print(json.dumps({"accepted": item["accepted"], "score": item["quality_score"], "stored": len(mem.training_examples(accepted_only=True))}, ensure_ascii=False)); mem.close(); td.cleanup()'`
+
+- **P3-5 当前执行：gRPC 流式 Trace API**：将当前一元返回改为 server-streaming，让调用方可实时观察 Agent 思考、工具调用和最终输出。
 
 ### P4 待执行（生态与协作）
 

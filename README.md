@@ -16,6 +16,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - Python TaskExecutor sidecar launched by Rust workers for real task execution.
 - Model gateway adapters for OpenAI, Anthropic, OpenAI-compatible local proxies, and a placeholder local endpoint.
 - SQLite FTS5 working memory with tokenized search, SQLite graph memory, and sparse vector recall.
+- Training data buffer that scores successful traces for future fine-tuning datasets without starting training jobs.
 - Skill persistence as `SKILL.md` files with draft, replay-check, and active states.
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
 - Local Web panel for Runtime status, task submission, recent memory, skill summaries, and language switching.
@@ -189,6 +190,14 @@ Quick check:
 
 `PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import tempfile, json; td=tempfile.TemporaryDirectory(); mem=WorkingMemory(td.name+"/work.sqlite3"); mem.append_message("s1", "user", "Rust runtime workers schedule tasks locally"); mem.append_message("s2", "user", "Python skills store reusable execution steps"); hits=mem.search_vector("local task scheduler in Rust", limit=2); print(json.dumps({"top_session": hits[0]["session_id"], "top_score": round(hits[0]["score"], 3), "context": mem.vector_context("reusable Python skill", 2)}, ensure_ascii=False)); mem.close(); td.cleanup()'`
 
+## Training Buffer
+
+Successful execution paths are copied into a SQLite `training_examples` buffer with a simple quality score and acceptance flag. The score rewards substantive answers, model metadata, timing, and recorded tool or orchestration structure. This only collects future fine-tuning candidates; it does not start LoRA or any other training job.
+
+Quick check:
+
+`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import tempfile, json; td=tempfile.TemporaryDirectory(); mem=WorkingMemory(td.name+"/work.sqlite3"); trace={"provider":"local","model":"mock","started_at":1,"finished_at":2,"tool_steps":[{"tool":"read_file"}]}; item=mem.record_training_example("s1", "Summarize the runtime architecture", "This answer explains the runtime architecture with enough detail for reuse.", trace); print(json.dumps({"accepted": item["accepted"], "score": item["quality_score"], "stored": len(mem.training_examples(accepted_only=True))}, ensure_ascii=False)); mem.close(); td.cleanup()'`
+
 ## Skill Quality Control
 
 `SkillStore.save_skill()` now uses a minimal draft -> verified -> active flow. It renders a draft skill, replays the generated `SKILL.md` structure by parsing name, description, and numbered steps, and only marks the skill `active` when the replay check passes. Weak skills remain `draft` with `replay_check: failed` and are not returned by `skill_context()`.
@@ -217,6 +226,7 @@ The current prototype has been run locally with:
 - Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`
 - SQLite graph memory extraction and cross-session graph lookup
 - Sparse vector memory write, search, and prompt context formatting
+- Training example scoring and accepted-only buffer lookup
 
 ## MVP Boundaries
 

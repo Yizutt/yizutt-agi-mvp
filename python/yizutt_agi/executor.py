@@ -198,6 +198,15 @@ def execute_task(task_id: str, worker_id: str, task: str, session_id: str, conte
             {"kind": "runtime_result", "worker_id": worker_id, "provider": selected_provider},
         )
         memory.ingest_trace(session_id, trace)
+        training_example = memory.record_training_example(session_id, task, answer, trace)
+        emit(
+            "training_recorded",
+            "",
+            training_id=training_example["id"],
+            quality_score=training_example["quality_score"],
+            accepted=training_example["accepted"],
+            reasons=training_example["reasons"],
+        )
         skill_path = skills.save_skill(
             name=context.get("skill_name") or _fallback_skill_name(task),
             description=f"Reusable sidecar execution path for: {task[:120]}",
