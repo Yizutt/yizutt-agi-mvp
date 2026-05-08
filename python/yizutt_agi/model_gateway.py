@@ -6,13 +6,13 @@ import urllib.request
 
 class ModelGateway:
     def __init__(self) -> None:
-        self.openai_model = os.getenv("NEXUS_OPENAI_MODEL", "gpt-5.4-mini")
-        self.anthropic_model = os.getenv("NEXUS_ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
-        self.openai_base_url = os.getenv("NEXUS_OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
-        self.openai_api_style = os.getenv("NEXUS_OPENAI_API_STYLE") or (
+        self.openai_model = os.getenv("YIZUTT_OPENAI_MODEL", "gpt-5.4-mini")
+        self.anthropic_model = os.getenv("YIZUTT_ANTHROPIC_MODEL", "claude-sonnet-4-5-20250929")
+        self.openai_base_url = os.getenv("YIZUTT_OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        self.openai_api_style = os.getenv("YIZUTT_OPENAI_API_STYLE") or (
             "responses" if self.openai_base_url == "https://api.openai.com/v1" else "chat"
         )
-        self.local_url = os.getenv("NEXUS_LOCAL_MODEL_URL", "")
+        self.local_url = os.getenv("YIZUTT_LOCAL_MODEL_URL", "")
 
     def choose(self, task: str, preferred: str | None = None) -> str:
         if preferred:
@@ -21,7 +21,7 @@ class ModelGateway:
             if preferred == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
                 raise RuntimeError("ANTHROPIC_API_KEY is not set")
             if preferred == "local" and not self.local_url:
-                raise RuntimeError("NEXUS_LOCAL_MODEL_URL is not set")
+                raise RuntimeError("YIZUTT_LOCAL_MODEL_URL is not set")
             return preferred
         text = task.lower()
         if self.local_url and ("local" in text or "offline" in text):
@@ -37,9 +37,9 @@ class ModelGateway:
             return "anthropic"
         if self.local_url:
             return "local"
-        raise RuntimeError("No model provider configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or NEXUS_LOCAL_MODEL_URL.")
+        raise RuntimeError("No model provider configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or YIZUTT_LOCAL_MODEL_URL.")
 
-    def complete(self, prompt: str, provider: str | None = None, system: str = "You are Nexus AGI.") -> str:
+    def complete(self, prompt: str, provider: str | None = None, system: str = "You are Yizutt AGI.") -> str:
         selected = self.choose(prompt, provider)
         if selected == "openai":
             return self._openai(prompt, system)
@@ -98,7 +98,7 @@ class ModelGateway:
 
     def _local(self, prompt: str, system: str) -> str:
         if not self.local_url:
-            raise RuntimeError("NEXUS_LOCAL_MODEL_URL is not set")
+            raise RuntimeError("YIZUTT_LOCAL_MODEL_URL is not set")
         data = self._post_json(self.local_url, {"system": system, "prompt": prompt}, {})
         return data.get("text") or data.get("response") or json.dumps(data, ensure_ascii=False)
 

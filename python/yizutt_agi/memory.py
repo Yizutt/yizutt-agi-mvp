@@ -8,7 +8,7 @@ from typing import Iterable
 
 
 class WorkingMemory:
-    def __init__(self, path: str | Path = ".nexus/memory/work.sqlite3") -> None:
+    def __init__(self, path: str | Path = ".yizutt/memory/work.sqlite3") -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path)

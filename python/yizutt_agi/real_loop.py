@@ -13,7 +13,7 @@ from .skills import SkillStore
 
 
 SYSTEM_PROMPT = (
-    "You are Nexus AGI running a minimal task-memory-skill loop. "
+    "You are Yizutt AGI running a minimal task-memory-skill loop. "
     "Complete the user task directly, then return strict JSON with these keys: "
     "answer, reusable_steps, skill_name, skill_description. "
     "reusable_steps must be a list of concrete steps that can be reused later."
@@ -74,8 +74,8 @@ def run_real_loop(
     task: str,
     provider: str | None = None,
     skill_name: str | None = None,
-    memory_path: str | Path = ".nexus/memory/work.sqlite3",
-    skills_root: str | Path = ".nexus/skills",
+    memory_path: str | Path = ".yizutt/memory/work.sqlite3",
+    skills_root: str | Path = ".yizutt/skills",
 ) -> dict[str, Any]:
     gateway = ModelGateway()
     selected_provider = gateway.choose(task, provider)
@@ -141,12 +141,12 @@ def run_real_loop(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Run one real Nexus AGI task-memory-skill loop.")
+    parser = argparse.ArgumentParser(description="Run one real Yizutt AGI task-memory-skill loop.")
     parser.add_argument("--task", required=True, help="Task to execute with a real model provider.")
     parser.add_argument("--provider", choices=["auto", "openai", "anthropic", "local"], default="auto")
     parser.add_argument("--skill-name", default="", help="Optional skill name override.")
-    parser.add_argument("--memory-path", default=".nexus/memory/work.sqlite3")
-    parser.add_argument("--skills-root", default=".nexus/skills")
+    parser.add_argument("--memory-path", default=".yizutt/memory/work.sqlite3")
+    parser.add_argument("--skills-root", default=".yizutt/skills")
     args = parser.parse_args(argv)
 
     try:

@@ -1,11 +1,11 @@
-from nexus_agi import NexusRuntimeClient, SkillStore, WorkingMemory
+from yizutt_agi import YizuttRuntimeClient, SkillStore, WorkingMemory
 
 
 def main() -> None:
     memory = WorkingMemory()
     skills = SkillStore()
     session_id = memory.start_session("demo")
-    client = NexusRuntimeClient()
+    client = YizuttRuntimeClient()
     result = client.submit("summarize repo architecture", session_id=session_id)
     memory.append_message(session_id, "user", "summarize repo architecture")
     memory.append_message(session_id, "assistant", result["output"], {"trace": result["trace"]})

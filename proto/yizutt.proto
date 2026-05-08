@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-package nexus;
+package yizutt;
 
 service RuntimeService {
   rpc Submit(TaskRequest) returns (TaskReply);

@@ -1,5 +1,5 @@
 /target/
-/.nexus/
+/.yizutt/
 __pycache__/
 *.pyc
 *.egg-info/

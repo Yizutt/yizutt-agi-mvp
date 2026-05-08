@@ -15,16 +15,16 @@ use tonic::{transport::Server, Request, Response, Status};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-mod nexus;
+mod yizutt;
 
-use nexus::runtime_service_server::{RuntimeService, RuntimeServiceServer};
-use nexus::runtime_service_client::RuntimeServiceClient;
-use nexus::worker_service_client::WorkerServiceClient;
-use nexus::worker_service_server::{WorkerService, WorkerServiceServer};
-use nexus::{Empty, PoolStatusReply, TaskReply, TaskRequest, WorkerHealth, WorkerSnapshot};
+use yizutt::runtime_service_server::{RuntimeService, RuntimeServiceServer};
+use yizutt::runtime_service_client::RuntimeServiceClient;
+use yizutt::worker_service_client::WorkerServiceClient;
+use yizutt::worker_service_server::{WorkerService, WorkerServiceServer};
+use yizutt::{Empty, PoolStatusReply, TaskReply, TaskRequest, WorkerHealth, WorkerSnapshot};
 
 #[derive(Parser, Debug)]
-#[command(name = "nexus-runtime", version, about = "Nexus AGI local runtime")]
+#[command(name = "yizutt-runtime", version, about = "Yizutt AGI local runtime")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -42,7 +42,7 @@ enum Commands {
         min_workers: usize,
         #[arg(long, default_value = "4")]
         max_workers: usize,
-        #[arg(long, default_value = ".nexus/runtime")]
+        #[arg(long, default_value = ".yizutt/runtime")]
         home: PathBuf,
         #[arg(long, default_value = "120")]
         task_timeout_secs: u64,
@@ -134,10 +134,10 @@ impl WorkerPool {
             .arg("--task-timeout-secs")
             .arg(self.cfg.task_timeout_secs.to_string())
             .current_dir(&worker_dir)
-            .env("NEXUS_WORKER_DIR", &worker_dir)
-            .env("NEXUS_PROJECT_ROOT", &self.cfg.project_root)
-            .env("NEXUS_MEMORY_PATH", self.cfg.project_root.join(".nexus/memory/work.sqlite3"))
-            .env("NEXUS_SKILLS_ROOT", self.cfg.project_root.join(".nexus/skills"))
+            .env("YIZUTT_WORKER_DIR", &worker_dir)
+            .env("YIZUTT_PROJECT_ROOT", &self.cfg.project_root)
+            .env("YIZUTT_MEMORY_PATH", self.cfg.project_root.join(".yizutt/memory/work.sqlite3"))
+            .env("YIZUTT_SKILLS_ROOT", self.cfg.project_root.join(".yizutt/skills"))
             .env("PYTHONPATH", python_path(&self.cfg.project_root))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -274,12 +274,12 @@ fn anyhow_to_status(err: anyhow::Error) -> Status {
 async fn execute_sidecar(worker_id: &str, task_id: String, req: TaskRequest, timeout_secs: u64) -> Result<TaskReply> {
     let started_at = Utc::now().to_rfc3339();
     let context = serde_json::from_str::<Value>(&req.context_json).unwrap_or(json!({}));
-    let python = env::var("NEXUS_PYTHON").unwrap_or_else(|_| "python".to_string());
+    let python = env::var("YIZUTT_PYTHON").unwrap_or_else(|_| "python".to_string());
     let output = timeout(
         Duration::from_secs(timeout_secs),
         Command::new(python)
             .arg("-m")
-            .arg("nexus_agi.executor")
+            .arg("yizutt_agi.executor")
             .arg("--task-id")
             .arg(&task_id)
             .arg("--worker-id")

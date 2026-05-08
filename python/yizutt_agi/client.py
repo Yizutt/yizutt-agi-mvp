@@ -4,10 +4,10 @@ import subprocess
 from pathlib import Path
 
 
-class NexusRuntimeClient:
-    def __init__(self, binary: str | Path = "target/debug/nexus-runtime", addr: str | None = None) -> None:
+class YizuttRuntimeClient:
+    def __init__(self, binary: str | Path = "target/debug/yizutt-runtime", addr: str | None = None) -> None:
         self.binary = str(binary)
-        self.addr = addr or os.getenv("NEXUS_RUNTIME_ADDR", "http://127.0.0.1:50200")
+        self.addr = addr or os.getenv("YIZUTT_RUNTIME_ADDR", "http://127.0.0.1:50200")
 
     def submit(self, task: str, session_id: str = "default", context: dict | None = None) -> dict:
         completed = subprocess.run(

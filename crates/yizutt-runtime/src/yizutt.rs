@@ -97,7 +97,7 @@ pub mod runtime_service_client {
             self.inner.ready().await.map_err(|e| {
                 tonic::Status::unknown(format!("service was not ready: {}", e.into()))
             })?;
-            let path = http::uri::PathAndQuery::from_static("/nexus.RuntimeService/Submit");
+            let path = http::uri::PathAndQuery::from_static("/yizutt.RuntimeService/Submit");
             self.inner
                 .unary(request.into_request(), path, tonic_prost::ProstCodec::default())
                 .await
@@ -110,7 +110,7 @@ pub mod runtime_service_client {
             self.inner.ready().await.map_err(|e| {
                 tonic::Status::unknown(format!("service was not ready: {}", e.into()))
             })?;
-            let path = http::uri::PathAndQuery::from_static("/nexus.RuntimeService/PoolStatus");
+            let path = http::uri::PathAndQuery::from_static("/yizutt.RuntimeService/PoolStatus");
             self.inner
                 .unary(request.into_request(), path, tonic_prost::ProstCodec::default())
                 .await
@@ -158,7 +158,7 @@ pub mod worker_service_client {
             self.inner.ready().await.map_err(|e| {
                 tonic::Status::unknown(format!("service was not ready: {}", e.into()))
             })?;
-            let path = http::uri::PathAndQuery::from_static("/nexus.WorkerService/Execute");
+            let path = http::uri::PathAndQuery::from_static("/yizutt.WorkerService/Execute");
             self.inner
                 .unary(request.into_request(), path, tonic_prost::ProstCodec::default())
                 .await
@@ -172,7 +172,7 @@ pub mod worker_service_client {
             self.inner.ready().await.map_err(|e| {
                 tonic::Status::unknown(format!("service was not ready: {}", e.into()))
             })?;
-            let path = http::uri::PathAndQuery::from_static("/nexus.WorkerService/Health");
+            let path = http::uri::PathAndQuery::from_static("/yizutt.WorkerService/Health");
             self.inner
                 .unary(request.into_request(), path, tonic_prost::ProstCodec::default())
                 .await
@@ -236,7 +236,7 @@ pub mod runtime_service_server {
 
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/nexus.RuntimeService/Submit" => {
+                "/yizutt.RuntimeService/Submit" => {
                     struct SubmitSvc<T: RuntimeService>(pub Arc<T>);
                     impl<T: RuntimeService> tonic::server::UnaryService<TaskRequest> for SubmitSvc<T> {
                         type Response = TaskReply;
@@ -255,7 +255,7 @@ pub mod runtime_service_server {
                         Ok(grpc.unary(method, req).await)
                     })
                 }
-                "/nexus.RuntimeService/PoolStatus" => {
+                "/yizutt.RuntimeService/PoolStatus" => {
                     struct PoolStatusSvc<T: RuntimeService>(pub Arc<T>);
                     impl<T: RuntimeService> tonic::server::UnaryService<Empty> for PoolStatusSvc<T> {
                         type Response = PoolStatusReply;
@@ -280,7 +280,7 @@ pub mod runtime_service_server {
     }
 
     impl<T: RuntimeService> tonic::server::NamedService for RuntimeServiceServer<T> {
-        const NAME: &'static str = "nexus.RuntimeService";
+        const NAME: &'static str = "yizutt.RuntimeService";
     }
 
     fn unimplemented_response() -> http::Response<tonic::body::Body> {
@@ -353,7 +353,7 @@ pub mod worker_service_server {
 
         fn call(&mut self, req: http::Request<B>) -> Self::Future {
             match req.uri().path() {
-                "/nexus.WorkerService/Execute" => {
+                "/yizutt.WorkerService/Execute" => {
                     struct ExecuteSvc<T: WorkerService>(pub Arc<T>);
                     impl<T: WorkerService> tonic::server::UnaryService<TaskRequest> for ExecuteSvc<T> {
                         type Response = TaskReply;
@@ -372,7 +372,7 @@ pub mod worker_service_server {
                         Ok(grpc.unary(method, req).await)
                     })
                 }
-                "/nexus.WorkerService/Health" => {
+                "/yizutt.WorkerService/Health" => {
                     struct HealthSvc<T: WorkerService>(pub Arc<T>);
                     impl<T: WorkerService> tonic::server::UnaryService<Empty> for HealthSvc<T> {
                         type Response = WorkerHealth;
@@ -397,7 +397,7 @@ pub mod worker_service_server {
     }
 
     impl<T: WorkerService> tonic::server::NamedService for WorkerServiceServer<T> {
-        const NAME: &'static str = "nexus.WorkerService";
+        const NAME: &'static str = "yizutt.WorkerService";
     }
 
     fn unimplemented_response() -> http::Response<tonic::body::Body> {

@@ -1,4 +1,4 @@
 [workspace]
-members = ["crates/nexus-runtime"]
+members = ["crates/yizutt-runtime"]
 resolver = "2"
 

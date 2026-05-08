@@ -4,7 +4,7 @@ from pathlib import Path
 
 
 class SkillStore:
-    def __init__(self, root: str | Path = ".nexus/skills") -> None:
+    def __init__(self, root: str | Path = ".yizutt/skills") -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
 

@@ -1,119 +1,93 @@
-# Nexus AGI MVP Context
+# CONTEXT.md — Yizutt AGI MVP 项目状态
 
-This document records the project context for future contributors and coding agents. It is meant to explain why this prototype exists, what has already been proven, and which parts should be treated as stable versus experimental.
+本文档供 AI 助手快速理解项目结构、约束和当前任务。执行任务时以第六节为当前目标。
 
-## Project Goal
+## 一、项目简介
 
-Nexus AGI is intended to become an evolvable AI teammate framework. The long-term direction includes a runtime kernel, model gateway, memory system, reusable skills, worker orchestration, and eventually self-improvement loops.
+Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rust 核心运行时 + Python 技能层的混合架构。目标是实现本地优先、模型无关、越用越聪明的个人 AI 助手。
 
-This repository is only the MVP runtime skeleton. Its purpose is to prove the smallest useful loop:
+## 二、已完成的核心特性
 
-`submit task -> schedule worker -> execute Python sidecar -> call model gateway -> write memory -> save skill -> return trace`
+- **项目更名**：对外项目名已从旧名称迁移为 Yizutt AGI。
+- **Rust Runtime & WorkerPool**：基于 gRPC 的异步任务调度，支持动态扩容、健康标记。
+- **CLI 入口重写**：使用 `clap` 实现了 `run`、`submit`、`status` 子命令。
+- **Sidecar 执行通路**：Rust Worker 启动 Python 子进程执行任务，通信通过标准输出 JSON 轨迹。
+- **模型网关**：`model_gateway.py` 统一了 OpenAI / Anthropic / 本地模型的调用接口。
+- **中文记忆检索**：双 FTS5 索引（原文字段 + 分词字段），解决了 SQLite 默认分词的中文 0 命中问题。
+- **技能文件存储**：任务执行完成后可将成功路径保存为 `SKILL.md`。
+- **工具调用循环**：`executor.py` 支持模型返回 `tool_calls`，执行受控工具后继续下一轮模型调用。
+- **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
 
-The MVP should stay small until the runtime loop is reliable.
+## 三、关键文件与模块
 
-## Current Architecture
+| 模块 | 路径 | 职责 |
+|------|------|------|
+| Rust Runtime 主程序 | `crates/yizutt-runtime/src/main.rs` | WorkerPool 管理、gRPC 服务启动、Sidecar 子进程拉起 |
+| Protobuf 定义 | `proto/yizutt.proto` | 定义 RuntimeService 和 WorkerService |
+| Python 执行器 | `python/yizutt_agi/executor.py` | 被 Worker 调用的入口，负责调用模型、执行工具、写记忆、存技能 |
+| 模型网关 | `python/yizutt_agi/model_gateway.py` | 多厂商 API 统一调用，启发式路由 |
+| 工作记忆 | `python/yizutt_agi/memory.py` | SQLite + FTS5 双索引存储与检索 |
+| 技能存储 | `python/yizutt_agi/skills.py` | 技能文件的保存和加载 |
+| 离线闭环测试 | `python/yizutt_agi/real_loop.py` | 不依赖 Runtime 的端到端验证脚本 |
 
-The Rust layer owns runtime mechanics:
+## 四、架构决策
 
-- CLI entrypoint with explicit `run`, `submit`, and `status` commands.
-- Local gRPC `RuntimeService` and `WorkerService`.
-- WorkerPool scheduling and basic dynamic scale-up.
-- Worker child-process lifecycle.
-- Worker-side Python sidecar execution and trace collection.
+- **Rust 负责性能敏感层**（调度、隔离、通信），**Python 负责灵活层**（模型调用、工具、记忆、技能）。
+- **Worker 隔离机制**：每个 Worker 是独立子进程，有独立工作目录 `.yizutt/runtime/workers/<id>/`。
+- **内存数据非共享**：Worker 之间不直接共享内存状态，必要协作通过 Runtime 分配子任务。
+- **中文分词**：`memory.py` 写入时生成 tokens，查询时命中 `messages_tokens_fts`。
+- **受控工具执行**：`executor.py` 默认允许读目录和读文件，写文件与命令执行必须显式授权。
+- **gRPC 通信**：目前仅支持一元调用（请求-响应），流式 API 在 Roadmap 中。
 
-The Python layer owns agent behavior:
+## 五、当前主要短板（需后续开发）
 
-- `ModelGateway` for OpenAI, Anthropic, OpenAI-compatible proxy, and local endpoint adapters.
-- `WorkingMemory` for SQLite FTS5 session/message persistence.
-- `SkillStore` for writing reusable `SKILL.md` files.
-- `executor.py` as the sidecar launched by Rust workers.
-- `real_loop.py` as a direct task-memory-skill loop without the Rust runtime.
+1. **无任务分解能力**：Runtime 没有 Leader/Orchestrator 将复杂任务拆分为子任务。
+2. **健康检查简单**：仅静态布尔标记，无主动探活。
+3. **安全沙箱薄弱**：无 cgroups 限制、无网络白名单、无操作审计。
+4. **项目缺少许可证**：目前法律上是 All Rights Reserved。
 
-## Runtime Flow
+## 六、当前任务
 
-1. A user submits a task through `nexus-runtime submit`.
-2. Runtime chooses the least busy healthy worker.
-3. Worker calls `python -m nexus_agi.executor`.
-4. Python sidecar emits JSON trace events to stdout.
-5. Sidecar loads relevant memory and skill context.
-6. Sidecar selects a model provider through `ModelGateway`.
-7. Sidecar calls the model and receives the final answer.
-8. Sidecar writes user task, assistant answer, and trace to SQLite.
-9. Sidecar saves the reusable path as a `SKILL.md` file.
-10. Rust Worker collects stdout events into `trace.events` and returns one gRPC reply.
+**任务**：实现最小任务分解能力，为复杂任务提供 Leader/Orchestrator 入口。
+**涉及文件**：待定，预计包含 `crates/yizutt-runtime/src/main.rs`、`proto/yizutt.proto`、`python/yizutt_agi/executor.py`。
+**验收标准**：能提交一个复杂任务并拆成多个子任务执行或生成明确子任务计划；trace 中能看到分解结果；不破坏现有 `submit/status` 和 sidecar 执行通路。
 
-Trace delivery is currently aggregated, not streamed.
+## 七、常用开发命令
 
-## Verified Behavior
+```bash
+# 构建 Rust
+cargo build
 
-The prototype has been run locally with:
+# 启动 Runtime（自定义端口）
+cargo run -p yizutt-runtime -- run --bind 127.0.0.1:50200
 
-- `cargo build`
-- `cargo check`
-- `python -m py_compile python/nexus_agi/*.py`
-- `target/debug/nexus-runtime --help`
-- `target/debug/nexus-runtime run`
-- `target/debug/nexus-runtime status`
-- `target/debug/nexus-runtime submit`
-- Python sidecar execution through an OpenAI-compatible local proxy at `127.0.0.1:48327`
-- Real model call using `gpt-5.4-mini`
-- FTS5 memory writes
-- Chinese memory queries such as `技能`, `运行`, `运行时`, and `真实模型`
-- Skill file creation under `.nexus/skills`
+# 提交任务
+cargo run -p yizutt-runtime -- submit --task "你的任务描述" --addr http://127.0.0.1:50200
 
-## Important Decisions
+# 查看状态
+cargo run -p yizutt-runtime -- status --addr http://127.0.0.1:50200
 
-The CLI was rewritten with `clap` because the original default path treated unknown commands and `--help` as runtime startup. This caused accidental worker processes and port binding failures.
+# Python 离线闭环测试
+python -m yizutt_agi.real_loop
 
-The Worker execution layer was changed from a fixed string response to a Python sidecar. Rust should remain responsible for process lifecycle and scheduling; Python should remain responsible for agent behavior while the design is still evolving.
+# 编译检查 Python 文件
+python -m py_compile python/yizutt_agi/*.py
+```
 
-The memory layer keeps SQLite FTS5 but adds a tokenized FTS table. The default SQLite tokenizer does not work well for Chinese queries, so `WorkingMemory` stores both original content and generated search tokens.
+## 八、环境依赖
 
-The current sidecar uses a single final model response. It emits trace events around execution, but does not yet stream model tokens.
+- Rust 稳定版
+- Python 3.11+
+- 本地需可绑定回环端口
+- 可选：OpenAI API Key、Anthropic API Key 或 OpenAI-compatible 本地代理
 
-## Stable Enough To Reuse
+## 九、AI 助手行为准则
 
-- Rust CLI subcommand structure.
-- Local gRPC request/response path.
-- WorkerPool basic scheduling and scale-up.
-- Python `ModelGateway` provider abstraction.
-- `SkillStore` file format and save path.
-- SQLite schema as an MVP baseline.
-- Chinese tokenized search strategy as a pragmatic MVP fix.
+- 任何代码修改完成后，必须在会话结束前更新本文件的“最后更新”日期。
+- 若任务导致状态变化，必须同步更新第二、三、五节。
+- 如果第六节任务完成，重新审视第五节中剩余的第一个待解决短板，并在第六节写入下一个任务。
+- 更新完成后输出一句话：`CONTEXT.md 已同步`，并说明下一个任务是什么。
 
-## Experimental Or Incomplete
+---
 
-- Worker sandboxing is only a child process with a separate working directory.
-- Trace events are aggregated in one reply, not server-streamed.
-- Worker health only reports process availability, not full sidecar/model readiness.
-- There is no durable queue.
-- There is no cancellation API.
-- There is no structured tool runner yet.
-- There is no graph memory.
-- There is no LoRA or fine-tuning pipeline.
-- There is no CI.
-- There is no license yet.
-
-## Recommended Next Steps
-
-1. Add a license before promoting the repository as an open-source project.
-2. Add CI for `cargo check`, `cargo build`, and Python `py_compile`.
-3. Add gRPC server-streaming APIs for trace events.
-4. Add structured tool execution with timeout, cancellation, and typed errors.
-5. Add active Worker health checks that call the sidecar in a cheap probe mode.
-6. Add a durable queue before supporting long-running work.
-7. Improve memory ranking and add skill retrieval tests.
-8. Add integration tests for the full Rust-to-Python sidecar path.
-
-## Local Proxy Notes
-
-The tested environment used an OpenAI-compatible proxy:
-
-`NEXUS_OPENAI_BASE_URL=http://127.0.0.1:48327/v1`
-
-`NEXUS_OPENAI_MODEL=gpt-5.4-mini`
-
-For custom OpenAI-compatible base URLs, `ModelGateway` uses chat completions automatically. It reads `OPENAI_API_KEY` first and falls back to `PROXY_API_KEY` for local proxy authentication.
-
-Do not commit API keys, `.nexus/`, `target/`, `__pycache__/`, or `*.egg-info/`.
+最后更新：2026-05-08
