@@ -20,7 +20,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - Training data buffer that scores successful traces for future fine-tuning datasets without starting training jobs.
 - Skill persistence as `SKILL.md` files with draft, replay-check, and active states.
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
-- Local Web panel for Runtime status, task submission, recent memory, skill summaries, and language switching.
+- Local Web panel for Runtime status, task submission with streaming trace output, recent memory, skill summaries, and language switching.
 - Minimal Leader/Orchestrator planning that emits structured `plan_created` trace events for complex tasks.
 - Audited tool policy with path allowlists, command allowlists, and default denial for writes, commands, and internal directories.
 - Minimal MCP stdio client exposed as a gated `mcp_call` executor tool.
@@ -37,10 +37,10 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - `python/yizutt_agi/memory.py` stores cross-session working memory in SQLite FTS5 plus graph and vector memory tables.
 - `python/yizutt_agi/skills.py` stores reusable skills as `SKILL.md` files.
 - `python/yizutt_agi/i18n.py` resolves global language short codes, environment defaults, and CLI entrypoint suffixes.
-- `python/yizutt_agi/panel.py` serves the local Web panel and proxies panel API calls to the runtime CLI.
+- `python/yizutt_agi/panel.py` serves the local Web panel, proxies panel API calls to the runtime CLI, and bridges streaming task output over SSE.
 - `python/yizutt_agi/real_loop.py` runs one direct model-memory-skill loop without starting the Rust runtime.
 - `python/yizutt_agi/client.py` calls the Rust runtime CLI from Python.
-- `web/panel/index.html` is the browser UI for the local panel.
+- `web/panel/index.html` is the browser UI for the local panel, including live task trace output.
 - `examples/local_mock_model.py` serves a deterministic local model endpoint for no-key end-to-end demos.
 - `examples/echo_mcp_server.py` is a tiny MCP stdio server for local tool-call validation.
 - `examples/skills/echo-skill` is a minimal installable skill package.
@@ -81,7 +81,7 @@ Start the local Web panel:
 
 `PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200`
 
-Open `http://127.0.0.1:50280` in a browser. The panel lets you edit the Runtime address, inspect workers, submit a task, and view recent memory and skills. The default UI language is Simplified Chinese, with Traditional Chinese, English, Japanese, Korean, Arabic, and Russian available from the language selector. Model API keys stay in the server environment and are not exposed to the browser.
+Open `http://127.0.0.1:50280` in a browser. The panel lets you edit the Runtime address, inspect workers, submit a task, and view recent memory and skills. Task submission uses `/api/submit-stream` to bridge `submit --stream` into browser SSE output, so tool calls, tool results, and final trace lines appear while the worker is running. The default UI language is Simplified Chinese, with Traditional Chinese, English, Japanese, Korean, Arabic, and Russian available from the language selector. Model API keys stay in the server environment and are not exposed to the browser.
 
 Global language defaults use short codes. `cnzh` is the default Simplified Chinese code. You can start the panel with `--lang cnzh`, set `YIZUTT_LANG=cnzh`, or use an installed entrypoint suffix such as `yizutt-panel_cnzh`. Supported entrypoint suffixes are `_cnzh`, `_twzh`, `_en`, `_ja`, `_ko`, `_ar`, and `_ru`.
 
@@ -264,7 +264,8 @@ The current prototype has been run locally with:
 - `target/debug/yizutt-runtime run`
 - `target/debug/yizutt-runtime submit`
 - Python sidecar execution through an OpenAI-compatible local proxy
-- Local Web panel status, task submission, memory, skill APIs, and language switching
+- Local Web panel status, streaming task submission, memory, skill APIs, and language switching
+- Local Web panel `/api/submit-stream` SSE bridge for live gRPC trace output
 - gRPC `submit --stream` trace events for accepted, tool calls, tool results, training records, completion, and final output
 - Leader/Orchestrator `plan_created` trace generation for a complex task
 - Tool loop execution with `read_file` returning the first README heading
@@ -282,15 +283,15 @@ The current prototype has been run locally with:
 
 ## MVP Boundaries
 
-This is not a production agent runtime yet. Worker sandboxes are local child processes with separate working directories. The WorkerPool performs basic dynamic scale-up but does not yet implement cgroups, containers, remote workers, durable queues, server-streaming traces, long-running tool execution, LoRA training jobs, embedding-model semantic vectors, or production-grade backpressure.
+This is not a production agent runtime yet. Worker sandboxes are local child processes with separate working directories. The WorkerPool performs basic dynamic scale-up but does not yet implement cgroups, containers, remote workers, durable queues, long-running tool execution, LoRA training jobs, embedding-model semantic vectors, or production-grade backpressure.
 
 ## Roadmap
 
-- Add richer stream consumers in the Web panel.
+- Add persistent task history and replay in the Web panel.
 - Add richer tool execution cancellation and sandboxing.
 - Add stronger worker isolation with containers or OS sandboxing.
 - Add richer graph reasoning and skill ranking.
-- Add CI for Rust and Python checks.
+- Expand CI with Web panel smoke checks.
 
 ## License
 

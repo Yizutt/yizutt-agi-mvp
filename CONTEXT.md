@@ -18,7 +18,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **工具调用循环**：`executor.py` 支持模型返回 `tool_calls`，执行受控工具后继续下一轮模型调用。
 - **工具安全审计**：工具执行默认拒绝写文件、命令执行和内部路径访问，支持 `allowed_paths` 与 `allowed_commands` 显式授权，并在 trace 中记录脱敏参数摘要、允许状态和拒绝原因。
 - **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
-- **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务、查看最近记忆和技能摘要，并支持全局语言短码切换，默认 `cnzh` 中文-简体，可切换繁体中文、英语、日语、韩语、阿拉伯语、俄语。
+- **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务并实时显示 trace、查看最近记忆和技能摘要，并支持全局语言短码切换，默认 `cnzh` 中文-简体，可切换繁体中文、英语、日语、韩语、阿拉伯语、俄语。
 - **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回。
 - **主动健康检查**：Runtime `status` 会主动探测 Worker RPC 和 Python sidecar 导入状态，任务级错误返回 `status: "error"`，不再误杀 Worker。
 - **开源许可证**：仓库根目录已添加 MIT `LICENSE`，README 和中文说明已同步许可证信息。
@@ -44,8 +44,8 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 | 工作记忆 | `python/yizutt_agi/memory.py` | SQLite + FTS5 双索引存储与检索 |
 | 技能存储 | `python/yizutt_agi/skills.py` | 技能文件的保存和加载 |
 | 语言解析 | `python/yizutt_agi/i18n.py` | 统一解析 `cnzh` 等语言短码、环境变量和 CLI 入口后缀 |
-| 本地面板服务 | `python/yizutt_agi/panel.py` | 提供 HTTP 面板 API，代理 Runtime CLI，并读取记忆和技能摘要 |
-| 本地面板页面 | `web/panel/index.html` | 浏览器 UI，用于查看状态、提交任务、查看记忆和技能 |
+| 本地面板服务 | `python/yizutt_agi/panel.py` | 提供 HTTP 面板 API，代理 Runtime CLI，读取记忆和技能摘要，并用 SSE 桥接流式任务输出 |
+| 本地面板页面 | `web/panel/index.html` | 浏览器 UI，用于查看状态、提交任务、实时 trace、查看记忆和技能 |
 | 离线闭环测试 | `python/yizutt_agi/real_loop.py` | 不依赖 Runtime 的端到端验证脚本 |
 
 ## 四、架构决策
@@ -55,13 +55,13 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **内存数据非共享**：Worker 之间不直接共享内存状态，必要协作通过 Runtime 分配子任务。
 - **中文分词**：`memory.py` 写入时生成 tokens，查询时命中 `messages_tokens_fts`。
 - **受控工具执行**：`executor.py` 默认允许项目根目录内的读目录和读文件，但拒绝隐藏/内部目录；写文件必须显式开启 `allow_file_write`，命令必须同时开启 `allow_commands` 并命中 `allowed_commands` 白名单。
-- **gRPC 通信**：目前仅支持一元调用（请求-响应），流式 API 在 Roadmap 中。
+- **gRPC 通信**：Runtime 支持一元 `Submit` 和 server-streaming `SubmitStream`；Web 面板通过 `/api/submit-stream` 把 CLI 流式输出桥接为浏览器 SSE。
 
 ## 五、当前主要短板（需后续开发）
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划和流式 trace，但还没有持久队列和真正的并行子任务调度。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **下一阶段待定**：当前任务队列已完成，后续可转入真实用户场景打磨、Web 面板流式 trace、生产沙箱或远程 Worker。
+3. **下一阶段重点**：当前横向能力已覆盖 MVP 主链路，后续优先做真实使用场景纵向打磨，例如 Web 面板持久任务历史、生产沙箱或远程 Worker。
 
 ## 六、当前任务队列
 
@@ -324,9 +324,30 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 构造技能：`PYTHONPATH=python python -c 'from yizutt_agi.skills import SkillStore; s=SkillStore(".yizutt/compose-test/skills"); s.save_skill("read-readme", "Read README project documentation", ["Open README.md", "Extract project details"], "{}"); s.save_skill("summarize-architecture", "Summarize runtime architecture", ["Read gathered details", "Write concise architecture summary"], "{}")'`
 - 组合 workflow：`PYTHONPATH=python python -m yizutt_agi.skill_composer compose --goal "Read README and summarize runtime architecture" --skills-root .yizutt/compose-test/skills --workflows-root .yizutt/compose-test/workflows`
 
+### N1-1 已完成：Web 面板流式 Trace 消费
+
+**目标**：让浏览器面板不再等待 Runtime 一次性返回结果，而是在任务运行时实时显示 gRPC `submit --stream` 的 trace 行，便于观察工具调用、工具结果和最终输出。
+
+**涉及文件**：
+- `python/yizutt_agi/panel.py`
+- `web/panel/index.html`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**完成情况**：`panel.py` 新增 `/api/submit-stream` POST API，通过 `subprocess.Popen` 启动 `yizutt-runtime submit --stream`，把 stdout 按行封装为 SSE `line` 事件，并发送 `started`/`finished`/`error` 状态事件。`web/panel/index.html` 的提交按钮已改为消费 SSE stream，逐行追加 trace 输出，并在结束后刷新 Runtime 状态、最近记忆和技能摘要。该实现复用现有 CLI 和 gRPC streaming 通路，不改变 Rust 协议。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
+- 前端静态检查：`python -c 'from pathlib import Path; text=Path("web/panel/index.html").read_text(); assert "/api/submit-stream" in text and "streamSubmit" in text; print("panel-js-ok")'`
+- 终端 1：`PYTHONPATH=python python examples/local_mock_model.py --port 50990`
+- 终端 2：`PYTHONPATH=python YIZUTT_LOCAL_MODEL_URL=http://127.0.0.1:50990 target/debug/yizutt-runtime run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 2`
+- 终端 3：`PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200`
+- 浏览器打开 `http://127.0.0.1:50280`，提交 `Use the read_file tool to read README.md, then summarize the project in one sentence.`，应看到 `tool_call`、`tool_result`、`completed` 和最终 `exit_code: 0` 逐行出现。
+
 ### 当前任务状态
 
-截至本次更新，P0 到 P4 队列全部完成。下一轮建议优先选择一个真实使用场景做纵向打磨，而不是继续横向加模块。
+截至本次更新，P0 到 P4 队列和 N1-1 Web 面板流式 trace 消费均已完成。下一个建议任务是 N1-2：Web 面板持久任务历史与 replay，把每次提交的任务、session、状态、trace 摘要和完成时间保存到本地 SQLite 或 JSONL，供浏览器回看和复盘。
 
 ## 七、常用开发命令
 

@@ -1013,23 +1013,107 @@
       els.taskOutput.dataset.hasResult = "true";
       els.taskOutput.textContent = t("taskSubmitted");
       try {
-        const data = await api("/api/submit", {
-          method: "POST",
-          body: JSON.stringify({
-            runtime_addr: runtimeAddr(),
-            session_id: els.sessionId.value.trim() || "panel",
-            task,
-            context_json: els.contextJson.value.trim() || "{}"
-          })
+        const finalEvent = await streamSubmit({
+          runtime_addr: runtimeAddr(),
+          session_id: els.sessionId.value.trim() || "panel",
+          task,
+          context_json: els.contextJson.value.trim() || "{}"
         });
-        setBadge(els.submitState, t("complete"), "ok");
-        els.taskOutput.textContent = JSON.stringify(data.reply, null, 2);
+        if (finalEvent && finalEvent.ok === false) {
+          setBadge(els.submitState, t("failed"), "error");
+        } else {
+          setBadge(els.submitState, t("complete"), "ok");
+        }
         await Promise.allSettled([refreshStatus(), refreshMemory(), refreshSkills()]);
       } catch (err) {
         setBadge(els.submitState, t("failed"), "error");
-        els.taskOutput.textContent = err.message;
+        appendOutputLine(`\n${t("error")}: ${err.message}`);
       } finally {
         els.submitTask.disabled = false;
+      }
+    }
+
+    async function streamSubmit(payload) {
+      const response = await fetch("/api/submit-stream", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok || !response.body) {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+      els.taskOutput.textContent = "";
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalEvent = null;
+      while (true) {
+        const {value, done} = await reader.read();
+        if (done) {
+          break;
+        }
+        buffer += decoder.decode(value, {stream: true});
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+        for (const part of parts) {
+          const event = parseSseEvent(part);
+          if (!event) {
+            continue;
+          }
+          finalEvent = handleStreamEvent(event) || finalEvent;
+        }
+      }
+      if (buffer.trim()) {
+        const event = parseSseEvent(buffer);
+        finalEvent = handleStreamEvent(event) || finalEvent;
+      }
+      return finalEvent;
+    }
+
+    function parseSseEvent(block) {
+      const lines = block.split("\n");
+      const dataLines = lines
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart());
+      if (!dataLines.length) {
+        return null;
+      }
+      return JSON.parse(dataLines.join("\n"));
+    }
+
+    function handleStreamEvent(event) {
+      if (!event) {
+        return null;
+      }
+      if (event.type === "started") {
+        appendOutputLine(`# ${event.session_id} @ ${event.runtime_addr}`);
+        return null;
+      }
+      if (event.type === "line") {
+        appendOutputLine(event.text);
+        return null;
+      }
+      if (event.type === "finished") {
+        appendOutputLine(`\n# exit_code: ${event.exit_code}`);
+        if (event.stderr) {
+          appendOutputLine(`# stderr: ${event.stderr}`);
+        }
+        return event;
+      }
+      if (event.type === "error") {
+        appendOutputLine(`\n${t("error")}: ${event.error}`);
+        return {ok: false};
+      }
+      appendOutputLine(JSON.stringify(event));
+      return null;
+    }
+
+    function appendOutputLine(text) {
+      els.taskOutput.textContent += `${text}\n`;
+      const box = els.taskOutput.closest(".output");
+      if (box) {
+        box.scrollTop = box.scrollHeight;
       }
     }
 

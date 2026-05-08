@@ -112,6 +112,9 @@ def make_handler(config: PanelConfig) -> type[BaseHTTPRequestHandler]:
             if parsed.path == "/api/submit":
                 self.send_json(lambda: api_submit(config, self.read_json_body()))
                 return
+            if parsed.path == "/api/submit-stream":
+                self.send_submit_stream(config, self.read_json_body())
+                return
             self.send_error(HTTPStatus.NOT_FOUND, "not found")
 
         def log_message(self, fmt: str, *args: Any) -> None:
@@ -145,6 +148,26 @@ def make_handler(config: PanelConfig) -> type[BaseHTTPRequestHandler]:
             self.send_header("Access-Control-Allow-Origin", "*")
             self.end_headers()
             self.wfile.write(body)
+
+        def send_submit_stream(self, config: PanelConfig, payload: dict[str, Any]) -> None:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            try:
+                for event in api_submit_stream(config, payload):
+                    self.write_sse(event)
+            except BrokenPipeError:
+                return
+            except Exception as exc:
+                self.write_sse({"type": "error", "error": str(exc)})
+
+        def write_sse(self, event: dict[str, Any]) -> None:
+            body = f"data: {json.dumps(event, ensure_ascii=False)}\n\n".encode("utf-8")
+            self.wfile.write(body)
+            self.wfile.flush()
 
         def read_json_body(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length") or "0")
@@ -210,6 +233,58 @@ def api_submit(config: PanelConfig, payload: dict[str, Any]) -> dict[str, Any]:
         "runtime_addr": runtime_addr,
         "session_id": session_id,
         "reply": reply,
+        "completed_at": int(time.time()),
+    }
+
+
+def api_submit_stream(config: PanelConfig, payload: dict[str, Any]) -> Any:
+    task = str(payload.get("task") or "").strip()
+    if not task:
+        raise ValueError("task is required")
+    runtime_addr = str(payload.get("runtime_addr") or config.runtime_addr)
+    session_id = str(payload.get("session_id") or "panel")
+    context_json = normalize_context_json(payload.get("context_json"), payload.get("context"))
+    args = [
+        config.runtime_bin,
+        "submit",
+        "--stream",
+        "--addr",
+        runtime_addr,
+        "--session",
+        session_id,
+        "--task",
+        task,
+        "--context-json",
+        context_json,
+    ]
+    started_at = int(time.time())
+    yield {
+        "type": "started",
+        "runtime_addr": runtime_addr,
+        "session_id": session_id,
+        "started_at": started_at,
+    }
+    process = subprocess.Popen(
+        args,
+        cwd=config.project_root,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    try:
+        assert process.stdout is not None
+        for line in process.stdout:
+            yield {"type": "line", "text": line.rstrip("\n")}
+        stderr = process.stderr.read() if process.stderr else ""
+        code = process.wait(timeout=5)
+    except Exception:
+        process.kill()
+        raise
+    yield {
+        "type": "finished",
+        "ok": code == 0,
+        "exit_code": code,
+        "stderr": stderr.strip(),
         "completed_at": int(time.time()),
     }
 
