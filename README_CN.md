@@ -176,4 +176,4 @@ Python sidecar 支持模型通过结构化 `tool_calls` 调用 `list_dir`、`rea
 
 ## 许可证
 
-当前还没有选择许可证。正式作为开源项目使用前，应补充明确的开源许可证。
+本项目使用 MIT License 开源。详情见 `LICENSE`。

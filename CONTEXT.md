@@ -21,6 +21,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务、查看最近记忆和技能摘要，并支持全局语言短码切换，默认 `cnzh` 中文-简体，可切换繁体中文、英语、日语、韩语、阿拉伯语、俄语。
 - **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回。
 - **主动健康检查**：Runtime `status` 会主动探测 Worker RPC 和 Python sidecar 导入状态，任务级错误返回 `status: "error"`，不再误杀 Worker。
+- **开源许可证**：仓库根目录已添加 MIT `LICENSE`，README 和中文说明已同步许可证信息。
 
 ## 三、关键文件与模块
 
@@ -50,7 +51,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **项目缺少许可证**：目前法律上是 All Rights Reserved。
+3. **工程自动化不足**：还没有 GitHub Actions CI，基础检查依赖手动执行。
 
 ## 六、当前任务队列
 
@@ -161,7 +162,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 拒绝未授权命令：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; print(json.dumps(execute_tool("run_command", {"command":["python","-V"]}, {}), ensure_ascii=False))'`
 - 允许白名单命令：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; print(json.dumps(execute_tool("run_command", {"command":["python","-V"]}, {"allow_commands":True,"allowed_commands":["python"]}), ensure_ascii=False))'`
 
-### P1-2 当前执行：添加开源许可证
+### P1-2 已完成：添加开源许可证
 
 **目标**：为公开仓库选择并添加许可证，消除 All Rights Reserved 状态。
 
@@ -176,7 +177,13 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - README 明确说明许可证。
 - GitHub 能识别许可证类型。
 
-### P1-3 待执行：添加 CI
+**完成情况**：已选择 MIT License，并在仓库根目录新增标准 `LICENSE` 文件。`README.md` 和 `README_CN.md` 已说明项目使用 MIT License。
+
+**手动验证命令**：
+- `test -f LICENSE`
+- `rg -n "MIT|License|许可证" LICENSE README.md README_CN.md CONTEXT.md`
+
+### P1-3 当前执行：添加 CI
 
 **目标**：为 Rust 和 Python 的基础检查添加 GitHub Actions。
 

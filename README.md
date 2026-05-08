@@ -174,4 +174,4 @@ This is not a production agent runtime yet. Worker sandboxes are local child pro
 
 ## License
 
-No license has been selected yet. Add a license before using this as a public open-source project.
+This project is licensed under the MIT License. See `LICENSE` for details.
