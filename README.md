@@ -9,7 +9,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 ## Features
 
 - Rust runtime with local gRPC services for task submission and worker status.
-- WorkerPool with basic dynamic scale-up when all healthy workers are busy.
+- WorkerPool with basic dynamic scale-up and active worker/sidecar health checks.
 - `clap` based CLI with explicit `run`, `submit`, and `status` commands.
 - Python TaskExecutor sidecar launched by Rust workers for real task execution.
 - Model gateway adapters for OpenAI, Anthropic, OpenAI-compatible local proxies, and a placeholder local endpoint.
@@ -49,7 +49,7 @@ The Rust build uses a vendored `protoc`, so a system `protoc` binary is not requ
 
 Start the runtime:
 
-`RUST_LOG=info cargo run -p yizutt-runtime -- run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 4`
+`RUST_LOG=info cargo run -p yizutt-runtime -- run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 4 --health-timeout-secs 3`
 
 Submit a task from another terminal:
 
@@ -58,6 +58,8 @@ Submit a task from another terminal:
 Check pool status:
 
 `target/debug/yizutt-runtime status`
+
+`status` actively probes each worker process and verifies that the Python sidecar can import `yizutt_agi.executor`. The output includes `checked_at` and `last_error` for each worker. Task-level model or provider errors are returned as `status: "error"` replies and do not mark the worker unhealthy.
 
 Start the local Web panel:
 
@@ -137,6 +139,7 @@ The current prototype has been run locally with:
 - Local Web panel status, task submission, memory, skill APIs, and language switching
 - Leader/Orchestrator `plan_created` trace generation for a complex task
 - Tool loop execution with `read_file` returning the first README heading
+- Active health checks for healthy workers, sidecar import failures, and task-level error replies
 - Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`
 
 ## MVP Boundaries
@@ -148,7 +151,6 @@ This is not a production agent runtime yet. Worker sandboxes are local child pro
 - Add gRPC server-streaming trace APIs.
 - Add structured tool execution and cancellation.
 - Add stronger worker isolation with containers or OS sandboxing.
-- Add health checks that actively probe sidecar execution.
 - Add graph memory and skill ranking.
 - Add CI for Rust and Python checks.
 

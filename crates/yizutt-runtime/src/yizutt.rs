@@ -33,6 +33,10 @@ pub struct WorkerHealth {
     pub healthy: bool,
     #[prost(uint32, tag = "3")]
     pub inflight: u32,
+    #[prost(string, tag = "4")]
+    pub checked_at: String,
+    #[prost(string, tag = "5")]
+    pub last_error: String,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -45,6 +49,10 @@ pub struct WorkerSnapshot {
     pub inflight: u32,
     #[prost(bool, tag = "4")]
     pub healthy: bool,
+    #[prost(string, tag = "5")]
+    pub checked_at: String,
+    #[prost(string, tag = "6")]
+    pub last_error: String,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -99,7 +107,11 @@ pub mod runtime_service_client {
             })?;
             let path = http::uri::PathAndQuery::from_static("/yizutt.RuntimeService/Submit");
             self.inner
-                .unary(request.into_request(), path, tonic_prost::ProstCodec::default())
+                .unary(
+                    request.into_request(),
+                    path,
+                    tonic_prost::ProstCodec::default(),
+                )
                 .await
         }
 
@@ -112,7 +124,11 @@ pub mod runtime_service_client {
             })?;
             let path = http::uri::PathAndQuery::from_static("/yizutt.RuntimeService/PoolStatus");
             self.inner
-                .unary(request.into_request(), path, tonic_prost::ProstCodec::default())
+                .unary(
+                    request.into_request(),
+                    path,
+                    tonic_prost::ProstCodec::default(),
+                )
                 .await
         }
     }
@@ -160,7 +176,11 @@ pub mod worker_service_client {
             })?;
             let path = http::uri::PathAndQuery::from_static("/yizutt.WorkerService/Execute");
             self.inner
-                .unary(request.into_request(), path, tonic_prost::ProstCodec::default())
+                .unary(
+                    request.into_request(),
+                    path,
+                    tonic_prost::ProstCodec::default(),
+                )
                 .await
         }
 
@@ -174,7 +194,11 @@ pub mod worker_service_client {
             })?;
             let path = http::uri::PathAndQuery::from_static("/yizutt.WorkerService/Health");
             self.inner
-                .unary(request.into_request(), path, tonic_prost::ProstCodec::default())
+                .unary(
+                    request.into_request(),
+                    path,
+                    tonic_prost::ProstCodec::default(),
+                )
                 .await
         }
     }
@@ -413,4 +437,3 @@ pub mod worker_service_server {
         response
     }
 }
-

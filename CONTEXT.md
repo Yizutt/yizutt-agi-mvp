@@ -9,7 +9,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 ## 二、已完成的核心特性
 
 - **项目更名**：对外项目名已从旧名称迁移为 Yizutt AGI。
-- **Rust Runtime & WorkerPool**：基于 gRPC 的异步任务调度，支持动态扩容、健康标记。
+- **Rust Runtime & WorkerPool**：基于 gRPC 的异步任务调度，支持动态扩容、主动健康检查和健康标记。
 - **CLI 入口重写**：使用 `clap` 实现了 `run`、`submit`、`status` 子命令。
 - **Sidecar 执行通路**：Rust Worker 启动 Python 子进程执行任务，通信通过标准输出 JSON 轨迹。
 - **模型网关**：`model_gateway.py` 统一了 OpenAI / Anthropic / 本地模型的调用接口。
@@ -19,13 +19,14 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
 - **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务、查看最近记忆和技能摘要，并支持全局语言短码切换，默认 `cnzh` 中文-简体，可切换繁体中文、英语、日语、韩语、阿拉伯语、俄语。
 - **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回。
+- **主动健康检查**：Runtime `status` 会主动探测 Worker RPC 和 Python sidecar 导入状态，任务级错误返回 `status: "error"`，不再误杀 Worker。
 
 ## 三、关键文件与模块
 
 | 模块 | 路径 | 职责 |
 |------|------|------|
-| Rust Runtime 主程序 | `crates/yizutt-runtime/src/main.rs` | WorkerPool 管理、gRPC 服务启动、Sidecar 子进程拉起 |
-| Protobuf 定义 | `proto/yizutt.proto` | 定义 RuntimeService 和 WorkerService |
+| Rust Runtime 主程序 | `crates/yizutt-runtime/src/main.rs` | WorkerPool 管理、主动健康探测、gRPC 服务启动、Sidecar 子进程拉起 |
+| Protobuf 定义 | `proto/yizutt.proto` | 定义 RuntimeService、WorkerService 和健康检查字段 |
 | Python 执行器 | `python/yizutt_agi/executor.py` | 被 Worker 调用的入口，负责模型调用、工具循环、最小任务分解、写记忆、存技能 |
 | 模型网关 | `python/yizutt_agi/model_gateway.py` | 多厂商 API 统一调用，启发式路由 |
 | 工作记忆 | `python/yizutt_agi/memory.py` | SQLite + FTS5 双索引存储与检索 |
@@ -47,9 +48,8 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 ## 五、当前主要短板（需后续开发）
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
-2. **健康检查简单**：仅静态布尔标记，无主动探活。
-3. **安全沙箱薄弱**：无 cgroups 限制、无网络白名单、无操作审计。
-4. **项目缺少许可证**：目前法律上是 All Rights Reserved。
+2. **安全沙箱薄弱**：无 cgroups 限制、无网络白名单、无操作审计。
+3. **项目缺少许可证**：目前法律上是 All Rights Reserved。
 
 ## 六、当前任务队列
 
@@ -114,7 +114,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 复杂任务：`target/debug/yizutt-runtime submit --task "为本地面板、主动健康检查和文档更新制定三步实现计划" --context-json '{"provider":"openai","orchestrate":true,"max_subtasks":3,"skill_name":"orchestrator-smoke"}'`
 - 工具调用任务：`target/debug/yizutt-runtime submit --task "Use the read_file tool to read README.md, then answer with the first heading only." --context-json '{"provider":"openai","allow_internal_paths":false,"max_tool_steps":2,"skill_name":"tool-loop-smoke"}'`
 
-### P0-2 当前执行：主动健康检查
+### P0-2 已完成：主动健康检查
 
 **目标**：让 WorkerPool 不只依赖静态 `healthy` 标记，而能主动探测 worker 和 Python sidecar 是否可用。
 
@@ -129,7 +129,15 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 探活失败不应导致 Runtime 崩溃。
 - 提供手动验证命令。
 
-### P1-1 待执行：工具执行安全策略增强
+**完成情况**：`proto/yizutt.proto`、`crates/yizutt-runtime/src/yizutt.rs` 和 `crates/yizutt-runtime/src/main.rs` 已加入主动健康检查字段和逻辑。Runtime `status` 会调用 Worker `Health` RPC，Worker `Health` 会轻量导入 `yizutt_agi.executor` 验证 Python sidecar 可用。健康输出包含 `checked_at` 和 `last_error`。任务级模型或 provider 配置错误现在返回结构化 `status: "error"`，不会误杀 Worker；连接失败、RPC 不可达、sidecar 导入失败才会标记 unhealthy。
+
+**手动验证命令**：
+- 正常探活：`target/debug/yizutt-runtime status --addr http://127.0.0.1:50620`
+- 成功任务：`target/debug/yizutt-runtime submit --addr http://127.0.0.1:50620 --session health-smoke --task "Reply with exactly: health ok" --context-json '{"provider":"local","skill_name":"health-smoke"}'`
+- sidecar 失败探活：`YIZUTT_PYTHON=/bin/false target/debug/yizutt-runtime run --bind 127.0.0.1:50621 --worker-base-port 50640 --min-workers 1 --max-workers 1 --health-timeout-secs 2` 后执行 `target/debug/yizutt-runtime status --addr http://127.0.0.1:50621`，应看到 `healthy: false` 和 `last_error`。
+- 任务级错误不误杀 Worker：缺少 `YIZUTT_LOCAL_MODEL_URL` 时提交 `provider=local` 任务会返回 `status: "error"`，随后 `status` 仍显示 Worker `healthy: true`。
+
+### P1-1 当前执行：工具执行安全策略增强
 
 **目标**：在现有受控工具基础上增加更明确的安全策略，包括路径白名单、命令白名单、审计 trace 和危险操作默认拒绝。
 
@@ -208,7 +216,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 cargo build
 
 # 启动 Runtime（自定义端口）
-cargo run -p yizutt-runtime -- run --bind 127.0.0.1:50200
+cargo run -p yizutt-runtime -- run --bind 127.0.0.1:50200 --health-timeout-secs 3
 
 # 提交任务
 cargo run -p yizutt-runtime -- submit --task "你的任务描述" --addr http://127.0.0.1:50200

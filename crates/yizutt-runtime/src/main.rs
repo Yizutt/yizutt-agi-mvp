@@ -17,8 +17,8 @@ use uuid::Uuid;
 
 mod yizutt;
 
-use yizutt::runtime_service_server::{RuntimeService, RuntimeServiceServer};
 use yizutt::runtime_service_client::RuntimeServiceClient;
+use yizutt::runtime_service_server::{RuntimeService, RuntimeServiceServer};
 use yizutt::worker_service_client::WorkerServiceClient;
 use yizutt::worker_service_server::{WorkerService, WorkerServiceServer};
 use yizutt::{Empty, PoolStatusReply, TaskReply, TaskRequest, WorkerHealth, WorkerSnapshot};
@@ -46,6 +46,8 @@ enum Commands {
         home: PathBuf,
         #[arg(long, default_value = "120")]
         task_timeout_secs: u64,
+        #[arg(long, default_value = "3")]
+        health_timeout_secs: u64,
     },
     /// Internal worker process. Usually started by `run`.
     #[command(hide = true)]
@@ -56,6 +58,8 @@ enum Commands {
         id: String,
         #[arg(long, default_value = "120")]
         task_timeout_secs: u64,
+        #[arg(long, default_value = "3")]
+        health_timeout_secs: u64,
     },
     /// Submit one task to a running runtime.
     Submit {
@@ -84,6 +88,7 @@ struct RuntimeConfig {
     home: PathBuf,
     project_root: PathBuf,
     task_timeout_secs: u64,
+    health_timeout_secs: u64,
 }
 
 struct WorkerHandle {
@@ -93,6 +98,8 @@ struct WorkerHandle {
     child: Child,
     inflight: usize,
     healthy: bool,
+    checked_at: String,
+    last_error: String,
 }
 
 struct WorkerPool {
@@ -133,11 +140,19 @@ impl WorkerPool {
             .arg(&id)
             .arg("--task-timeout-secs")
             .arg(self.cfg.task_timeout_secs.to_string())
+            .arg("--health-timeout-secs")
+            .arg(self.cfg.health_timeout_secs.to_string())
             .current_dir(&worker_dir)
             .env("YIZUTT_WORKER_DIR", &worker_dir)
             .env("YIZUTT_PROJECT_ROOT", &self.cfg.project_root)
-            .env("YIZUTT_MEMORY_PATH", self.cfg.project_root.join(".yizutt/memory/work.sqlite3"))
-            .env("YIZUTT_SKILLS_ROOT", self.cfg.project_root.join(".yizutt/skills"))
+            .env(
+                "YIZUTT_MEMORY_PATH",
+                self.cfg.project_root.join(".yizutt/memory/work.sqlite3"),
+            )
+            .env(
+                "YIZUTT_SKILLS_ROOT",
+                self.cfg.project_root.join(".yizutt/skills"),
+            )
             .env("PYTHONPATH", python_path(&self.cfg.project_root))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
@@ -152,6 +167,8 @@ impl WorkerPool {
             child,
             inflight: 0,
             healthy: true,
+            checked_at: Utc::now().to_rfc3339(),
+            last_error: String::new(),
         });
         Ok(())
     }
@@ -160,7 +177,15 @@ impl WorkerPool {
         if self.workers.is_empty() {
             self.spawn_worker().await?;
         }
-        let all_busy = self.workers.iter().filter(|w| w.healthy).all(|w| w.inflight > 0);
+        self.probe_all().await;
+        if !self.workers.iter().any(|w| w.healthy) && self.workers.len() < self.cfg.max_workers {
+            self.spawn_worker().await?;
+        }
+        let all_busy = self
+            .workers
+            .iter()
+            .filter(|w| w.healthy)
+            .all(|w| w.inflight > 0);
         if all_busy && self.workers.len() < self.cfg.max_workers {
             self.spawn_worker().await?;
         }
@@ -181,15 +206,72 @@ impl WorkerPool {
                 address: w.addr.clone(),
                 inflight: w.inflight as u32,
                 healthy: w.healthy,
+                checked_at: w.checked_at.clone(),
+                last_error: w.last_error.clone(),
             })
             .collect()
     }
 
-    async fn mark_failed(&mut self, worker_id: &str) {
+    async fn mark_failed(&mut self, worker_id: &str, reason: &str) {
         if let Some(w) = self.workers.iter_mut().find(|w| w.id == worker_id) {
             w.healthy = false;
+            w.checked_at = Utc::now().to_rfc3339();
+            w.last_error = reason.to_string();
             let _ = w.child.kill().await;
-            warn!(worker_id, port = w.port, "worker marked unhealthy");
+            warn!(worker_id, port = w.port, reason, "worker marked unhealthy");
+        }
+    }
+
+    async fn probe_all(&mut self) {
+        let probes = self
+            .workers
+            .iter()
+            .enumerate()
+            .map(|(idx, worker)| (idx, worker.id.clone(), worker.addr.clone()))
+            .collect::<Vec<_>>();
+        for (idx, worker_id, addr) in probes {
+            let checked_at = Utc::now().to_rfc3339();
+            if let Some(worker) = self.workers.get_mut(idx) {
+                match worker.child.try_wait() {
+                    Ok(Some(status)) => {
+                        worker.healthy = false;
+                        worker.checked_at = checked_at;
+                        worker.last_error = format!("worker process exited with {status}");
+                        warn!(worker_id = %worker.id, port = worker.port, "worker process exited before health probe");
+                        continue;
+                    }
+                    Ok(None) => {}
+                    Err(err) => {
+                        worker.healthy = false;
+                        worker.checked_at = checked_at;
+                        worker.last_error = format!("worker process check failed: {err}");
+                        warn!(worker_id = %worker.id, port = worker.port, error = %err, "worker process check failed");
+                        continue;
+                    }
+                }
+            }
+
+            match probe_worker_health(addr.clone(), self.cfg.health_timeout_secs).await {
+                Ok(health) => {
+                    if let Some(worker) = self.workers.get_mut(idx) {
+                        worker.healthy = health.healthy;
+                        worker.checked_at = if health.checked_at.is_empty() {
+                            Utc::now().to_rfc3339()
+                        } else {
+                            health.checked_at
+                        };
+                        worker.last_error = health.last_error;
+                    }
+                }
+                Err(err) => {
+                    if let Some(worker) = self.workers.get_mut(idx) {
+                        worker.healthy = false;
+                        worker.checked_at = Utc::now().to_rfc3339();
+                        worker.last_error = err.to_string();
+                        warn!(worker_id, %addr, error = %err, "worker health probe failed");
+                    }
+                }
+            }
         }
     }
 }
@@ -203,13 +285,20 @@ struct RuntimeServer {
 
 #[tonic::async_trait]
 impl RuntimeService for RuntimeServer {
-    async fn submit(&self, request: Request<TaskRequest>) -> std::result::Result<Response<TaskReply>, Status> {
+    async fn submit(
+        &self,
+        request: Request<TaskRequest>,
+    ) -> std::result::Result<Response<TaskReply>, Status> {
         let task = request.into_inner();
         let (idx, addr, worker_id) = {
             let mut pool = self.pool.lock().await;
             let idx = pool.choose_worker().await.map_err(anyhow_to_status)?;
             pool.workers[idx].inflight += 1;
-            (idx, pool.workers[idx].addr.clone(), pool.workers[idx].id.clone())
+            (
+                idx,
+                pool.workers[idx].addr.clone(),
+                pool.workers[idx].id.clone(),
+            )
         };
         let call_result = async {
             let mut client = WorkerServiceClient::connect(addr.clone())
@@ -224,15 +313,19 @@ impl RuntimeService for RuntimeServer {
             if let Some(w) = pool.workers.get_mut(idx) {
                 w.inflight = w.inflight.saturating_sub(1);
             }
-            if call_result.is_err() {
-                pool.mark_failed(&worker_id).await;
+            if let Err(err) = &call_result {
+                pool.mark_failed(&worker_id, &err.to_string()).await;
             }
         }
         call_result.map(Response::new)
     }
 
-    async fn pool_status(&self, _request: Request<Empty>) -> std::result::Result<Response<PoolStatusReply>, Status> {
-        let pool = self.pool.lock().await;
+    async fn pool_status(
+        &self,
+        _request: Request<Empty>,
+    ) -> std::result::Result<Response<PoolStatusReply>, Status> {
+        let mut pool = self.pool.lock().await;
+        pool.probe_all().await;
         Ok(Response::new(PoolStatusReply {
             workers: pool.snapshots(),
             min_workers: self.min_workers as u32,
@@ -245,24 +338,59 @@ impl RuntimeService for RuntimeServer {
 struct WorkerServer {
     id: String,
     task_timeout_secs: u64,
+    health_timeout_secs: u64,
 }
 
 #[tonic::async_trait]
 impl WorkerService for WorkerServer {
-    async fn execute(&self, request: Request<TaskRequest>) -> std::result::Result<Response<TaskReply>, Status> {
+    async fn execute(
+        &self,
+        request: Request<TaskRequest>,
+    ) -> std::result::Result<Response<TaskReply>, Status> {
         let req = request.into_inner();
         let task_id = Uuid::new_v4().to_string();
-        execute_sidecar(&self.id, task_id, req, self.task_timeout_secs)
-            .await
-            .map(Response::new)
-            .map_err(|err| Status::internal(err.to_string()))
+        let session_id = req.session_id.clone();
+        match execute_sidecar(&self.id, task_id.clone(), req, self.task_timeout_secs).await {
+            Ok(reply) => Ok(Response::new(reply)),
+            Err(err) => {
+                let trace = json!({
+                    "task_id": task_id,
+                    "session_id": session_id,
+                    "worker_id": self.id.clone(),
+                    "finished_at": Utc::now().to_rfc3339(),
+                    "events": [{
+                        "event_type": "error",
+                        "payload": err.to_string(),
+                        "timestamp": Utc::now().to_rfc3339()
+                    }]
+                });
+                Ok(Response::new(TaskReply {
+                    task_id,
+                    worker_id: self.id.clone(),
+                    status: "error".to_string(),
+                    output: err.to_string(),
+                    trace_json: trace.to_string(),
+                }))
+            }
+        }
     }
 
-    async fn health(&self, _request: Request<Empty>) -> std::result::Result<Response<WorkerHealth>, Status> {
+    async fn health(
+        &self,
+        _request: Request<Empty>,
+    ) -> std::result::Result<Response<WorkerHealth>, Status> {
+        let checked_at = Utc::now().to_rfc3339();
+        let probe_result = probe_python_sidecar(self.health_timeout_secs).await;
+        let (healthy, last_error) = match probe_result {
+            Ok(()) => (true, String::new()),
+            Err(err) => (false, err.to_string()),
+        };
         Ok(Response::new(WorkerHealth {
             worker_id: self.id.clone(),
-            healthy: true,
+            healthy,
             inflight: 0,
+            checked_at,
+            last_error,
         }))
     }
 }
@@ -271,7 +399,12 @@ fn anyhow_to_status(err: anyhow::Error) -> Status {
     Status::internal(err.to_string())
 }
 
-async fn execute_sidecar(worker_id: &str, task_id: String, req: TaskRequest, timeout_secs: u64) -> Result<TaskReply> {
+async fn execute_sidecar(
+    worker_id: &str,
+    task_id: String,
+    req: TaskRequest,
+    timeout_secs: u64,
+) -> Result<TaskReply> {
     let started_at = Utc::now().to_rfc3339();
     let context = serde_json::from_str::<Value>(&req.context_json).unwrap_or(json!({}));
     let python = env::var("YIZUTT_PYTHON").unwrap_or_else(|_| "python".to_string());
@@ -357,11 +490,59 @@ async fn execute_sidecar(worker_id: &str, task_id: String, req: TaskRequest, tim
     })
 }
 
-async fn run_worker(port: u16, id: String, task_timeout_secs: u64) -> Result<()> {
+async fn probe_python_sidecar(timeout_secs: u64) -> Result<()> {
+    let python = env::var("YIZUTT_PYTHON").unwrap_or_else(|_| "python".to_string());
+    let output = timeout(
+        Duration::from_secs(timeout_secs.max(1)),
+        Command::new(python)
+            .arg("-c")
+            .arg("import yizutt_agi.executor")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .with_context(|| format!("sidecar health probe timed out after {timeout_secs}s"))??;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    Err(anyhow!("sidecar import failed: {}", stderr.trim()))
+}
+
+async fn probe_worker_health(addr: String, timeout_secs: u64) -> Result<WorkerHealth> {
+    let mut client = timeout(
+        Duration::from_secs(timeout_secs.max(1)),
+        WorkerServiceClient::connect(addr.clone()),
+    )
+    .await
+    .with_context(|| format!("worker connect timed out after {timeout_secs}s"))?
+    .with_context(|| format!("connect {addr}"))?;
+    let reply = timeout(
+        Duration::from_secs(timeout_secs.max(1)),
+        client.health(Request::new(Empty {})),
+    )
+    .await
+    .with_context(|| format!("worker health timed out after {timeout_secs}s"))??;
+    Ok(reply.into_inner())
+}
+
+async fn run_worker(
+    port: u16,
+    id: String,
+    task_timeout_secs: u64,
+    health_timeout_secs: u64,
+) -> Result<()> {
     let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;
     info!(%id, %addr, "worker listening");
     Server::builder()
-        .add_service(WorkerServiceServer::new(WorkerServer { id, task_timeout_secs }))
+        .add_service(WorkerServiceServer::new(WorkerServer {
+            id,
+            task_timeout_secs,
+            health_timeout_secs,
+        }))
         .serve(addr)
         .await?;
     Ok(())
@@ -374,6 +555,7 @@ async fn run_runtime(
     max_workers: usize,
     home: PathBuf,
     task_timeout_secs: u64,
+    health_timeout_secs: u64,
 ) -> Result<()> {
     fs::create_dir_all(home.join("workers"))?;
     let cfg = RuntimeConfig {
@@ -384,6 +566,7 @@ async fn run_runtime(
         home,
         project_root: env::current_dir()?,
         task_timeout_secs,
+        health_timeout_secs,
     };
     let pool = WorkerPool::new(cfg.clone()).await?;
     let server = RuntimeServer {
@@ -400,7 +583,12 @@ async fn run_runtime(
     Ok(())
 }
 
-async fn run_submit(addr: String, task: String, session_id: String, context_json: String) -> Result<()> {
+async fn run_submit(
+    addr: String,
+    task: String,
+    session_id: String,
+    context_json: String,
+) -> Result<()> {
     let mut client = RuntimeServiceClient::connect(addr).await?;
     let reply = client
         .submit(Request::new(TaskRequest {
@@ -410,27 +598,44 @@ async fn run_submit(addr: String, task: String, session_id: String, context_json
         }))
         .await?
         .into_inner();
-    println!("{}", serde_json::to_string_pretty(&json!({
-        "task_id": reply.task_id,
-        "worker_id": reply.worker_id,
-        "status": reply.status,
-        "output": reply.output,
-        "trace": serde_json::from_str::<serde_json::Value>(&reply.trace_json).unwrap_or(json!({}))
-    }))?);
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&json!({
+            "task_id": reply.task_id,
+            "worker_id": reply.worker_id,
+            "status": reply.status,
+            "output": reply.output,
+            "trace": serde_json::from_str::<serde_json::Value>(&reply.trace_json).unwrap_or(json!({}))
+        }))?
+    );
     Ok(())
 }
 
 async fn run_status(addr: String) -> Result<()> {
     let mut client = RuntimeServiceClient::connect(addr).await?;
-    let reply = client.pool_status(Request::new(Empty {})).await?.into_inner();
-    println!("{}", serde_json::to_string_pretty(&reply.workers.iter().map(|w| {
-        json!({
-            "worker_id": w.worker_id,
-            "address": w.address,
-            "inflight": w.inflight,
-            "healthy": w.healthy
-        })
-    }).collect::<Vec<_>>())?);
+    let reply = client
+        .pool_status(Request::new(Empty {}))
+        .await?
+        .into_inner();
+    println!(
+        "{}",
+        serde_json::to_string_pretty(
+            &reply
+                .workers
+                .iter()
+                .map(|w| {
+                    json!({
+                        "worker_id": w.worker_id,
+                        "address": w.address,
+                        "inflight": w.inflight,
+                        "healthy": w.healthy,
+                        "checked_at": w.checked_at,
+                        "last_error": w.last_error
+                    })
+                })
+                .collect::<Vec<_>>()
+        )?
+    );
     Ok(())
 }
 
@@ -456,12 +661,25 @@ async fn main() -> Result<()> {
             max_workers,
             home,
             task_timeout_secs,
-        } => run_runtime(bind, worker_base_port, min_workers, max_workers, home, task_timeout_secs).await,
+            health_timeout_secs,
+        } => {
+            run_runtime(
+                bind,
+                worker_base_port,
+                min_workers,
+                max_workers,
+                home,
+                task_timeout_secs,
+                health_timeout_secs,
+            )
+            .await
+        }
         Commands::Worker {
             port,
             id,
             task_timeout_secs,
-        } => run_worker(port, id, task_timeout_secs).await,
+            health_timeout_secs,
+        } => run_worker(port, id, task_timeout_secs, health_timeout_secs).await,
         Commands::Submit {
             addr,
             task,

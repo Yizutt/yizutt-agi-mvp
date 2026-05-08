@@ -32,6 +32,8 @@ message WorkerHealth {
   string worker_id = 1;
   bool healthy = 2;
   uint32 inflight = 3;
+  string checked_at = 4;
+  string last_error = 5;
 }
 
 message WorkerSnapshot {
@@ -39,6 +41,8 @@ message WorkerSnapshot {
   string address = 2;
   uint32 inflight = 3;
   bool healthy = 4;
+  string checked_at = 5;
+  string last_error = 6;
 }
 
 message PoolStatusReply {
@@ -46,4 +50,3 @@ message PoolStatusReply {
   uint32 min_workers = 2;
   uint32 max_workers = 3;
 }
-
