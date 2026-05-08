@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .memory import WorkingMemory, compact_context
+from .mcp_client import McpStdioClient
 from .model_gateway import ModelGateway
 from .skills import SkillStore
 
@@ -37,12 +38,14 @@ Available tools:
 - read_file: {"path": "README.md", "max_chars": 12000}
 - write_file: {"path": "notes.txt", "content": "..."}; disabled unless context.allow_file_write is true or YIZUTT_EXECUTOR_ALLOW_WRITE=1
 - run_command: {"command": ["python", "-V"], "timeout_secs": 10, "max_output_chars": 12000}; disabled unless context.allow_commands is true and context.allowed_commands contains the executable name
+- mcp_call: {"server": "echo", "tool": "echo", "arguments": {"text": "hello"}}; disabled unless context.allow_mcp is true and context.mcp_servers defines the server
 
 Security policy:
 - Paths are confined to context.project_root or the current working directory.
 - Hidden and internal directories are denied unless context.allow_internal_paths is true.
 - context.allowed_paths can narrow file tools to specific project-relative directories.
 - Commands are denied by default. Use context.allow_commands=true plus context.allowed_commands=["python"] for limited command access.
+- MCP servers are denied by default. Use context.allow_mcp=true plus context.mcp_servers for explicit server access.
 
 When a tool is needed, return only JSON:
 {"tool_calls":[{"name":"read_file","arguments":{"path":"README.md"}}]}
@@ -553,6 +556,8 @@ def execute_tool(name: str, arguments: dict[str, Any], context: dict[str, Any]) 
             result = tool_write_file(arguments, context)
         elif name == "run_command":
             result = tool_run_command(arguments, context)
+        elif name == "mcp_call":
+            result = tool_mcp_call(arguments, context)
         else:
             result = _tool_result(False, False, "unknown_tool", f"Unknown tool: {name}")
         result.setdefault("arguments_summary", argument_summary)
@@ -661,6 +666,39 @@ def tool_run_command(arguments: dict[str, Any], context: dict[str, Any]) -> dict
     return _tool_result(completed.returncode == 0, True, "command_allowed", _truncate(text, max_output_chars))
 
 
+def tool_mcp_call(arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
+    if not _bool_setting(context, "allow_mcp", "YIZUTT_EXECUTOR_ALLOW_MCP"):
+        return _tool_result(
+            False,
+            False,
+            "mcp_disabled",
+            "mcp_call disabled; set context.allow_mcp=true and define context.mcp_servers",
+        )
+    server_name = str(arguments.get("server") or "").strip()
+    tool_name = str(arguments.get("tool") or "").strip()
+    if not server_name or not tool_name:
+        return _tool_result(False, False, "invalid_mcp_call", "server and tool are required")
+    servers = context.get("mcp_servers")
+    if not isinstance(servers, dict) or server_name not in servers:
+        return _tool_result(False, False, "mcp_server_not_configured", f"MCP server not configured: {server_name}")
+    server = servers[server_name]
+    if not isinstance(server, dict):
+        return _tool_result(False, False, "invalid_mcp_server_config", f"invalid MCP server config: {server_name}")
+    command = server.get("command")
+    if isinstance(command, str):
+        command = shlex.split(command)
+    if not isinstance(command, list) or not command:
+        return _tool_result(False, False, "invalid_mcp_command", "MCP server command must be a non-empty list or string")
+    timeout_secs = float(arguments.get("timeout_secs") or server.get("timeout_secs") or 15)
+    tool_arguments = arguments.get("arguments") or {}
+    if not isinstance(tool_arguments, dict):
+        return _tool_result(False, False, "invalid_mcp_arguments", "MCP tool arguments must be an object")
+    with McpStdioClient([str(part) for part in command], timeout_secs=timeout_secs) as client:
+        client.initialize()
+        result = client.call_tool(tool_name, tool_arguments)
+    return _tool_result(True, True, "mcp_allowed", json.dumps(result, ensure_ascii=False))
+
+
 def _tool_result(
     ok: bool,
     allowed: bool,
@@ -686,6 +724,11 @@ def summarize_tool_arguments(name: str, arguments: dict[str, Any]) -> dict[str, 
             summary["content_chars"] = len(str(value))
         elif key == "command":
             summary["command"] = _summarize_command(value)
+        elif key == "arguments" and name == "mcp_call":
+            if isinstance(value, dict):
+                summary["argument_keys"] = sorted(str(item) for item in value.keys())[:20]
+            else:
+                summary["argument_type"] = type(value).__name__
         elif isinstance(value, str):
             summary[key] = _truncate(value, 200)
         elif isinstance(value, (int, float, bool)) or value is None:

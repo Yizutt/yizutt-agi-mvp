@@ -28,6 +28,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **稀疏向量记忆**：`memory.py` 为每条消息持久化 `memory_vectors` 稀疏 token 向量，支持 cosine 相似检索，并向 executor/real_loop 注入 vector context。
 - **训练数据缓冲区**：成功执行轨迹会进入 SQLite `training_examples` 表，按简单质量规则评分并标记 accepted，为未来微调准备数据但不自动训练。
 - **gRPC 流式 Trace API**：`proto/yizutt.proto` 和 Runtime/Worker 已支持 `SubmitStream`/`ExecuteStream`，CLI 可用 `submit --stream` 实时输出事件，普通 `submit` 保持兼容。
+- **MCP stdio 工具接入**：新增 `mcp_client.py` 和受控 `mcp_call` 工具，默认拒绝，只有 `allow_mcp=true` 且显式配置 `mcp_servers` 时才可调用。
 
 ## 三、关键文件与模块
 
@@ -57,7 +58,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **外部工具生态不足**：还没有 MCP 客户端，无法直接连接标准化外部工具服务器。
+3. **技能生态不足**：还没有技能包标准、安装命令和社区共享索引。
 
 ## 六、当前任务队列
 
@@ -281,8 +282,16 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 ### P4 待执行（生态与协作）
 
-- **P4-1 当前执行：MCP 协议支持**：在模型网关或 Agent 运行时增加 MCP 客户端，使 Yizutt 能直接调用标准化外部工具（文件系统、数据库、代码解释器等）。
-- **P4-2 技能市场与社区共享**：定义技能包标准，支持 `yizutt skill install <url>` 安装别人分享的技能。
+- **P4-1 已完成：MCP 协议支持**：在模型网关或 Agent 运行时增加 MCP 客户端，使 Yizutt 能直接调用标准化外部工具（文件系统、数据库、代码解释器等）。
+
+**完成情况**：已新增 `python/yizutt_agi/mcp_client.py`，实现最小 MCP stdio JSON-RPC client，支持 `initialize`、`tools/list` 和 `tools/call`。`executor.py` 新增受控 `mcp_call` 工具，默认拒绝；必须 `context.allow_mcp=true` 且 `context.mcp_servers` 显式配置 server command 才允许调用。新增 `examples/echo_mcp_server.py` 作为本地验证 server。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
+- 默认拒绝：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; result=execute_tool("mcp_call", {"server":"echo","tool":"echo","arguments":{"text":"hello mcp"}}, {}); print(json.dumps(result, ensure_ascii=False))'`
+- 授权调用：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; ctx={"allow_mcp":True,"mcp_servers":{"echo":{"command":["python","examples/echo_mcp_server.py"]}}}; result=execute_tool("mcp_call", {"server":"echo","tool":"echo","arguments":{"text":"hello mcp"}}, ctx); print(json.dumps(result, ensure_ascii=False))'`
+
+- **P4-2 当前执行：技能市场与社区共享**：定义技能包标准，支持 `yizutt skill install <url>` 安装别人分享的技能。
 - **P4-3 多 Agent 会话协作**：多个 Agent 实例可同步共享记忆和技能变更，实现“团队记忆”。
 - **P4-4 跨技能组合与自动化工作流**：从多个独立技能中自动发现可串联的“技能链”，生成复合模板。
 

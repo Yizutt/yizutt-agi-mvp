@@ -23,6 +23,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - Local Web panel for Runtime status, task submission, recent memory, skill summaries, and language switching.
 - Minimal Leader/Orchestrator planning that emits structured `plan_created` trace events for complex tasks.
 - Audited tool policy with path allowlists, command allowlists, and default denial for writes, commands, and internal directories.
+- Minimal MCP stdio client exposed as a gated `mcp_call` executor tool.
 
 ## Repository Layout
 
@@ -38,6 +39,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - `python/yizutt_agi/client.py` calls the Rust runtime CLI from Python.
 - `web/panel/index.html` is the browser UI for the local panel.
 - `examples/local_mock_model.py` serves a deterministic local model endpoint for no-key end-to-end demos.
+- `examples/echo_mcp_server.py` is a tiny MCP stdio server for local tool-call validation.
 
 ## Install
 
@@ -163,6 +165,10 @@ By default, reads are confined to the project root, hidden/internal paths such a
 
 Tool trace events avoid raw sensitive arguments. `tool_call` records `arguments_summary`, and `tool_result` records `tool`, `ok`, `allowed`, `reason`, `arguments_summary`, and the result text.
 
+MCP access is also denied by default. To call an MCP stdio server, pass `context.allow_mcp=true` and define `context.mcp_servers`. Example policy check:
+
+`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; ctx={"allow_mcp":True,"mcp_servers":{"echo":{"command":["python","examples/echo_mcp_server.py"]}}}; result=execute_tool("mcp_call", {"server":"echo","tool":"echo","arguments":{"text":"hello mcp"}}, ctx); print(json.dumps(result, ensure_ascii=False))'`
+
 Manual policy checks:
 
 `PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; print(json.dumps(execute_tool("read_file", {"path": ".yizutt/memory/work.sqlite3"}, {}), ensure_ascii=False))'`
@@ -227,6 +233,7 @@ The current prototype has been run locally with:
 - Leader/Orchestrator `plan_created` trace generation for a complex task
 - Tool loop execution with `read_file` returning the first README heading
 - Tool policy denial for hidden paths, writes, and commands, plus allowlisted command execution
+- MCP stdio tool call denial and allowlisted echo-server execution
 - Skill replay checks, draft rejection, and same-name skill merge behavior
 - Active health checks for healthy workers, sidecar import failures, and task-level error replies
 - Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`
