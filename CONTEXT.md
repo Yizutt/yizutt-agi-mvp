@@ -48,9 +48,29 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 ## 六、当前任务
 
-**任务**：实现最小任务分解能力，为复杂任务提供 Leader/Orchestrator 入口。
-**涉及文件**：待定，预计包含 `crates/yizutt-runtime/src/main.rs`、`proto/yizutt.proto`、`python/yizutt_agi/executor.py`。
-**验收标准**：能提交一个复杂任务并拆成多个子任务执行或生成明确子任务计划；trace 中能看到分解结果；不破坏现有 `submit/status` 和 sidecar 执行通路。
+**任务**：实现最小 Leader/Orchestrator 任务分解能力。目标是在不重写 Runtime 架构的前提下，让复杂任务先生成结构化子任务计划，再由现有 Worker/sidecar 通路逐步执行或返回明确计划。
+
+**建议涉及文件**：
+- `proto/yizutt.proto`：如需要扩展请求/响应字段，先保持向后兼容。
+- `crates/yizutt-runtime/src/main.rs`：增加最小 orchestrator 入口或在 `submit` 路径中识别 orchestration context。
+- `python/yizutt_agi/executor.py`：复用现有工具循环，支持生成和执行子任务计划。
+- `python/yizutt_agi/model_gateway.py`：只有在计划生成需要独立模型调用接口时才修改。
+- `README.md`、`README_CN.md`、`CONTEXT.md`：完成后同步说明和下一任务。
+
+**验收标准**：
+- 现有 `yizutt-runtime submit/status` 行为不回归。
+- 能提交一个复杂任务，并在 trace 中看到 `plan_created` 或等价事件。
+- 子任务计划必须是结构化 JSON，至少包含 `id`、`title`、`objective`、`status`。
+- MVP 可以先顺序执行子任务，不要求并行执行。
+- 如果暂不执行子任务，也必须返回可复用、可持久化的明确计划。
+- Python sidecar 的普通单任务路径和工具调用循环必须继续可用。
+- 提供手动验证命令：一个普通任务、一个复杂任务、一个工具调用任务。
+
+**非目标**：
+- 不做远程 Worker。
+- 不做持久队列。
+- 不做 gRPC streaming。
+- 不做复杂多 Agent 角色系统。
 
 ## 七、常用开发命令
 
