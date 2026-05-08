@@ -18,6 +18,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **工具调用循环**：`executor.py` 支持模型返回 `tool_calls`，执行受控工具后继续下一轮模型调用。
 - **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
 - **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务、查看最近记忆和技能摘要。
+- **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回。
 
 ## 三、关键文件与模块
 
@@ -25,7 +26,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 |------|------|------|
 | Rust Runtime 主程序 | `crates/yizutt-runtime/src/main.rs` | WorkerPool 管理、gRPC 服务启动、Sidecar 子进程拉起 |
 | Protobuf 定义 | `proto/yizutt.proto` | 定义 RuntimeService 和 WorkerService |
-| Python 执行器 | `python/yizutt_agi/executor.py` | 被 Worker 调用的入口，负责调用模型、执行工具、写记忆、存技能 |
+| Python 执行器 | `python/yizutt_agi/executor.py` | 被 Worker 调用的入口，负责模型调用、工具循环、最小任务分解、写记忆、存技能 |
 | 模型网关 | `python/yizutt_agi/model_gateway.py` | 多厂商 API 统一调用，启发式路由 |
 | 工作记忆 | `python/yizutt_agi/memory.py` | SQLite + FTS5 双索引存储与检索 |
 | 技能存储 | `python/yizutt_agi/skills.py` | 技能文件的保存和加载 |
@@ -44,7 +45,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 ## 五、当前主要短板（需后续开发）
 
-1. **无任务分解能力**：Runtime 没有 Leader/Orchestrator 将复杂任务拆分为子任务。
+1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **健康检查简单**：仅静态布尔标记，无主动探活。
 3. **安全沙箱薄弱**：无 cgroups 限制、无网络白名单、无操作审计。
 4. **项目缺少许可证**：目前法律上是 All Rights Reserved。
@@ -83,7 +84,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - `PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200`
 - 浏览器打开 `http://127.0.0.1:50280`，点击刷新查看 Worker，输入任务后点击提交。
 
-### P0-1 当前执行：实现最小 Leader/Orchestrator 任务分解能力
+### P0-1 已完成：实现最小 Leader/Orchestrator 任务分解能力
 
 **目标**：在不重写 Runtime 架构的前提下，让复杂任务先生成结构化子任务计划，再由现有 Worker/sidecar 通路逐步执行或返回明确计划。
 
@@ -105,7 +106,14 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 **非目标**：不做远程 Worker；不做持久队列；不做 gRPC streaming；不做复杂多 Agent 角色系统。
 
-### P0-2 待执行：主动健康检查
+**完成情况**：已在 `python/yizutt_agi/executor.py` 中加入最小编排层。任务可通过 `context.orchestrate=true`、`context.mode=plan` 或复杂任务启发式触发规划，sidecar 会先生成结构化 `plan`，向 trace 输出 `plan_created` 事件，并默认返回 `plan_only` JSON。每个子任务包含 `id`、`title`、`objective`、`status`。如传入 `context.execute_plan=true`，可按顺序复用现有工具循环执行子任务。
+
+**手动验证命令**：
+- 普通任务：`target/debug/yizutt-runtime submit --task "Reply with exactly: ordinary ok" --context-json '{"provider":"openai","skill_name":"ordinary-smoke"}'`
+- 复杂任务：`target/debug/yizutt-runtime submit --task "为本地面板、主动健康检查和文档更新制定三步实现计划" --context-json '{"provider":"openai","orchestrate":true,"max_subtasks":3,"skill_name":"orchestrator-smoke"}'`
+- 工具调用任务：`target/debug/yizutt-runtime submit --task "Use the read_file tool to read README.md, then answer with the first heading only." --context-json '{"provider":"openai","allow_internal_paths":false,"max_tool_steps":2,"skill_name":"tool-loop-smoke"}'`
+
+### P0-2 当前执行：主动健康检查
 
 **目标**：让 WorkerPool 不只依赖静态 `healthy` 标记，而能主动探测 worker 和 Python sidecar 是否可用。
 
@@ -206,6 +214,9 @@ cargo run -p yizutt-runtime -- submit --task "你的任务描述" --addr http://
 
 # 查看状态
 cargo run -p yizutt-runtime -- status --addr http://127.0.0.1:50200
+
+# 复杂任务规划
+cargo run -p yizutt-runtime -- submit --task "为本地面板、主动健康检查和文档更新制定三步实现计划" --context-json '{"provider":"openai","orchestrate":true,"max_subtasks":3}'
 
 # 启动本地 Wed/Web 面板
 PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200

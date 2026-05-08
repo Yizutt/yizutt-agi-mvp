@@ -17,6 +17,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - Skill persistence as `SKILL.md` files.
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
 - Local Web panel for Runtime status, task submission, recent memory, and skill summaries.
+- Minimal Leader/Orchestrator planning that emits structured `plan_created` trace events for complex tasks.
 
 ## Repository Layout
 
@@ -105,6 +106,14 @@ The sidecar emits JSON trace events to stdout, calls the model gateway, writes t
 
 Current trace delivery is aggregated in a single gRPC reply. Server-streaming traces are a planned protocol upgrade.
 
+## Leader / Orchestrator
+
+Complex tasks can ask the Python sidecar to create a structured subtask plan before execution:
+
+`target/debug/yizutt-runtime submit --task "Plan a three-step implementation for a local dashboard, health check, and docs update" --context-json '{"provider":"openai","orchestrate":true,"max_subtasks":3}'`
+
+The returned trace includes a `plan_created` event. Each plan item includes `id`, `title`, `objective`, and `status`. By default the sidecar returns a reusable `plan_only` JSON result. To execute subtasks sequentially through the existing tool loop, pass `"execute_plan": true` in `context_json`.
+
 ## Memory Search
 
 Working memory stores the original message text plus a tokenized FTS5 index for Chinese and English search. Chinese queries such as `技能`, `运行`, and `运行时` are routed through the tokenized field; English queries continue to work through both original content and token indexes.
@@ -122,6 +131,9 @@ The current prototype has been run locally with:
 - `target/debug/yizutt-runtime run`
 - `target/debug/yizutt-runtime submit`
 - Python sidecar execution through an OpenAI-compatible local proxy
+- Local Web panel status, task submission, memory, and skill APIs
+- Leader/Orchestrator `plan_created` trace generation for a complex task
+- Tool loop execution with `read_file` returning the first README heading
 - Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`
 
 ## MVP Boundaries

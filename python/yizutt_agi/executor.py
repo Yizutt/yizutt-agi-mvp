@@ -21,6 +21,15 @@ SYSTEM_PROMPT = (
     "JSON object with tool_calls."
 )
 
+ORCHESTRATOR_PROMPT = (
+    "You are the Yizutt AGI Leader/Orchestrator. "
+    "Break complex work into a small, executable subtask plan. "
+    "Return only JSON with this shape: "
+    '{"plan":[{"id":"step-1","title":"...","objective":"...","status":"pending"}]}. '
+    "Every plan item must include id, title, objective, and status. "
+    "Use status=pending. Do not include markdown."
+)
+
 
 TOOL_GUIDE = """
 Available tools:
@@ -37,6 +46,25 @@ When enough information is available, return only JSON:
 """.strip()
 
 DEFAULT_DENY_PATH_PARTS = {".git", ".yizutt", "__pycache__", "target"}
+ORCHESTRATION_HINTS = {
+    "分解",
+    "规划",
+    "计划",
+    "多个任务",
+    "多步",
+    "复杂",
+    "实现",
+    "开发",
+    "重构",
+    "架构",
+    "端到端",
+    "orchestrate",
+    "decompose",
+    "plan",
+    "multi-step",
+    "subtask",
+    "workflow",
+}
 
 
 def emit(event_type: str, payload: str = "", **fields: Any) -> None:
@@ -74,14 +102,39 @@ def execute_task(task_id: str, worker_id: str, task: str, session_id: str, conte
         gateway = ModelGateway()
         selected_provider = gateway.choose(prompt, provider)
         emit("model_selected", selected_provider, model=_model_name(gateway, selected_provider))
-        answer, tool_steps = run_tool_loop(
-            gateway,
-            selected_provider,
-            task,
-            related_memory,
-            related_skills,
-            context,
-        )
+        orchestration_plan: list[dict[str, str]] = []
+        if should_orchestrate(task, context):
+            orchestration_plan = create_task_plan(
+                gateway,
+                selected_provider,
+                task,
+                related_memory,
+                related_skills,
+                context,
+            )
+            emit(
+                "plan_created",
+                json.dumps({"plan": orchestration_plan}, ensure_ascii=False),
+                plan=orchestration_plan,
+            )
+            answer, tool_steps = handle_orchestrated_task(
+                gateway,
+                selected_provider,
+                task,
+                related_memory,
+                related_skills,
+                context,
+                orchestration_plan,
+            )
+        else:
+            answer, tool_steps = run_tool_loop(
+                gateway,
+                selected_provider,
+                task,
+                related_memory,
+                related_skills,
+                context,
+            )
         emit("output", answer)
 
         trace = {
@@ -93,6 +146,7 @@ def execute_task(task_id: str, worker_id: str, task: str, session_id: str, conte
             "finished_at": int(time.time()),
             "context": context,
             "tool_steps": tool_steps,
+            "orchestration_plan": orchestration_plan,
         }
         memory.append_message(
             session_id,
@@ -107,6 +161,7 @@ def execute_task(task_id: str, worker_id: str, task: str, session_id: str, conte
             steps=[
                 "Load relevant working memory and reusable skills.",
                 "Select the configured model provider.",
+                "Create a structured subtask plan when the task requires orchestration.",
                 "Call the model gateway with task context.",
                 "Persist the answer and trace to working memory.",
                 "Save the successful path as a skill file.",
@@ -151,6 +206,134 @@ def build_prompt(
             observations,
         ]
     )
+
+
+def create_task_plan(
+    gateway: ModelGateway,
+    provider: str,
+    task: str,
+    memory_context: str,
+    skill_context: str,
+    context: dict[str, Any],
+) -> list[dict[str, str]]:
+    max_subtasks = _int_setting(context, "max_subtasks", "YIZUTT_EXECUTOR_MAX_SUBTASKS", 5)
+    max_subtasks = min(max(max_subtasks, 1), 12)
+    prompt = build_orchestrator_prompt(task, memory_context, skill_context, context, max_subtasks)
+    try:
+        raw = gateway.complete(prompt, provider=provider, system=ORCHESTRATOR_PROMPT)
+        parsed = _parse_json_object(raw)
+        plan = normalize_plan(parsed, task, max_subtasks)
+    except Exception as exc:
+        emit("plan_fallback", str(exc))
+        plan = []
+    if not plan:
+        plan = fallback_plan(task, max_subtasks)
+    return plan
+
+
+def build_orchestrator_prompt(
+    task: str,
+    memory_context: str,
+    skill_context: str,
+    context: dict[str, Any],
+    max_subtasks: int,
+) -> str:
+    return "\n".join(
+        [
+            "Task to decompose:",
+            task,
+            "",
+            "Constraints:",
+            f"- Produce between 2 and {max_subtasks} subtasks unless the work is truly atomic.",
+            "- Each subtask must be directly executable by the existing Yizutt worker sidecar.",
+            "- Keep objectives concrete and verifiable.",
+            "- Use status=pending.",
+            "",
+            "Runtime context:",
+            json.dumps(context, ensure_ascii=False),
+            "",
+            "Relevant working memory:",
+            memory_context or "None.",
+            "",
+            "Relevant reusable skills:",
+            skill_context or "None.",
+            "",
+            "Return only JSON.",
+        ]
+    )
+
+
+def handle_orchestrated_task(
+    gateway: ModelGateway,
+    provider: str,
+    task: str,
+    memory_context: str,
+    skill_context: str,
+    context: dict[str, Any],
+    plan: list[dict[str, str]],
+) -> tuple[str, list[dict[str, Any]]]:
+    if not _bool_setting(context, "execute_plan", "YIZUTT_EXECUTOR_EXECUTE_PLAN"):
+        return format_plan_answer(task, plan, mode="plan_only"), []
+
+    results: list[dict[str, Any]] = []
+    all_steps: list[dict[str, Any]] = []
+    for idx, subtask in enumerate(plan):
+        subtask["status"] = "running"
+        emit("subtask_started", subtask["objective"], subtask=subtask, index=idx)
+        sub_context = {
+            **context,
+            "orchestrate": False,
+            "parent_task": task,
+            "subtask_id": subtask["id"],
+        }
+        try:
+            sub_answer, sub_steps = run_tool_loop(
+                gateway,
+                provider,
+                subtask["objective"],
+                memory_context,
+                skill_context,
+                sub_context,
+            )
+            subtask["status"] = "completed"
+            result = {
+                "id": subtask["id"],
+                "title": subtask["title"],
+                "status": "completed",
+                "output": sub_answer,
+            }
+            all_steps.extend({"subtask_id": subtask["id"], **step} for step in sub_steps)
+            emit("subtask_completed", sub_answer, subtask=subtask, index=idx)
+        except Exception as exc:
+            subtask["status"] = "failed"
+            result = {
+                "id": subtask["id"],
+                "title": subtask["title"],
+                "status": "failed",
+                "error": str(exc),
+            }
+            emit("subtask_failed", str(exc), subtask=subtask, index=idx)
+        results.append(result)
+        if subtask["status"] == "failed" and not _bool_setting(context, "continue_on_subtask_error", "YIZUTT_EXECUTOR_CONTINUE_ON_SUBTASK_ERROR"):
+            break
+
+    return format_plan_answer(task, plan, mode="executed", results=results), all_steps
+
+
+def format_plan_answer(
+    task: str,
+    plan: list[dict[str, str]],
+    mode: str,
+    results: list[dict[str, Any]] | None = None,
+) -> str:
+    payload: dict[str, Any] = {
+        "mode": mode,
+        "task": task,
+        "plan": plan,
+    }
+    if results is not None:
+        payload["results"] = results
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 def run_tool_loop(
@@ -219,6 +402,79 @@ def parse_model_message(raw: str) -> dict[str, Any]:
             return {"kind": "final", "final_answer": parsed[key]}
 
     return {"kind": "plain", "text": raw}
+
+
+def normalize_plan(parsed: dict[str, Any] | None, task: str, max_subtasks: int) -> list[dict[str, str]]:
+    if not isinstance(parsed, dict):
+        return []
+    raw_plan = parsed.get("plan") or parsed.get("subtasks") or parsed.get("tasks") or []
+    if not isinstance(raw_plan, list):
+        return []
+
+    plan: list[dict[str, str]] = []
+    for idx, item in enumerate(raw_plan[:max_subtasks], start=1):
+        if isinstance(item, str):
+            title = clean_title(item) or f"Step {idx}"
+            objective = item.strip()
+        elif isinstance(item, dict):
+            title = clean_title(str(item.get("title") or item.get("name") or f"Step {idx}"))
+            objective = str(item.get("objective") or item.get("description") or item.get("task") or title).strip()
+        else:
+            continue
+        if not objective:
+            continue
+        plan.append(
+            {
+                "id": f"step-{idx}",
+                "title": title or f"Step {idx}",
+                "objective": objective,
+                "status": "pending",
+            }
+        )
+    return ensure_plan_ids(plan, task)
+
+
+def fallback_plan(task: str, max_subtasks: int) -> list[dict[str, str]]:
+    fragments = [
+        fragment.strip()
+        for fragment in re.split(r"[\n。；;]+|(?:\s+and\s+)", task)
+        if fragment.strip()
+    ]
+    if len(fragments) < 2:
+        fragments = [
+            f"Clarify the target outcome for: {task}",
+            f"Execute the main work for: {task}",
+            f"Verify the result and summarize next steps for: {task}",
+        ]
+    plan = []
+    for idx, fragment in enumerate(fragments[:max_subtasks], start=1):
+        plan.append(
+            {
+                "id": f"step-{idx}",
+                "title": clean_title(fragment) or f"Step {idx}",
+                "objective": fragment,
+                "status": "pending",
+            }
+        )
+    return plan
+
+
+def ensure_plan_ids(plan: list[dict[str, str]], task: str) -> list[dict[str, str]]:
+    if not plan:
+        return []
+    for idx, item in enumerate(plan, start=1):
+        item["id"] = f"step-{idx}"
+        item["title"] = item.get("title") or f"Step {idx}"
+        item["objective"] = item.get("objective") or task
+        item["status"] = "pending"
+    return plan
+
+
+def clean_title(value: str) -> str:
+    text = re.sub(r"\s+", " ", value).strip(" -:：")
+    if len(text) <= 48:
+        return text
+    return text[:45].rstrip() + "..."
 
 
 def execute_tool(name: str, arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -361,6 +617,21 @@ def _bool_setting(context: dict[str, Any], key: str, env_name: str) -> bool:
             return value
         return str(value).lower() in {"1", "true", "yes", "on"}
     return os.getenv(env_name, "").lower() in {"1", "true", "yes", "on"}
+
+
+def should_orchestrate(task: str, context: dict[str, Any]) -> bool:
+    if "orchestrate" in context:
+        if isinstance(context["orchestrate"], bool):
+            return context["orchestrate"]
+        return str(context["orchestrate"]).lower() in {"1", "true", "yes", "on"}
+    if str(context.get("mode", "")).lower() in {"orchestrate", "orchestration", "plan", "leader"}:
+        return True
+    if os.getenv("YIZUTT_EXECUTOR_ORCHESTRATE", "").lower() in {"1", "true", "yes", "on"}:
+        return True
+    lowered = task.lower()
+    if any(hint in lowered for hint in ORCHESTRATION_HINTS):
+        return True
+    return len(task) >= 120 and len(re.split(r"[，,。；;\n]", task)) >= 3
 
 
 def _int_setting(context: dict[str, Any], key: str, env_name: str, default: int) -> int:
