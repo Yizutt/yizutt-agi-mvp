@@ -1,0 +1,6 @@
+{
+  "name": "echo-skill",
+  "version": "0.1.0",
+  "description": "A tiny example skill package that echoes a provided phrase.",
+  "skill_file": "SKILL.md"
+}

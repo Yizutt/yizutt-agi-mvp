@@ -29,6 +29,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **训练数据缓冲区**：成功执行轨迹会进入 SQLite `training_examples` 表，按简单质量规则评分并标记 accepted，为未来微调准备数据但不自动训练。
 - **gRPC 流式 Trace API**：`proto/yizutt.proto` 和 Runtime/Worker 已支持 `SubmitStream`/`ExecuteStream`，CLI 可用 `submit --stream` 实时输出事件，普通 `submit` 保持兼容。
 - **MCP stdio 工具接入**：新增 `mcp_client.py` 和受控 `mcp_call` 工具，默认拒绝，只有 `allow_mcp=true` 且显式配置 `mcp_servers` 时才可调用。
+- **技能包安装器**：新增 `skill_market.py`、`yizutt` Python 入口和 `examples/skills/echo-skill` 包格式示例，支持从本地路径或 URL 安装技能。
 
 ## 三、关键文件与模块
 
@@ -58,7 +59,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **技能生态不足**：还没有技能包标准、安装命令和社区共享索引。
+3. **多 Agent 共享不足**：多个 Agent 实例还不能同步共享记忆和技能变更。
 
 ## 六、当前任务队列
 
@@ -291,8 +292,16 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 默认拒绝：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; result=execute_tool("mcp_call", {"server":"echo","tool":"echo","arguments":{"text":"hello mcp"}}, {}); print(json.dumps(result, ensure_ascii=False))'`
 - 授权调用：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; ctx={"allow_mcp":True,"mcp_servers":{"echo":{"command":["python","examples/echo_mcp_server.py"]}}}; result=execute_tool("mcp_call", {"server":"echo","tool":"echo","arguments":{"text":"hello mcp"}}, ctx); print(json.dumps(result, ensure_ascii=False))'`
 
-- **P4-2 当前执行：技能市场与社区共享**：定义技能包标准，支持 `yizutt skill install <url>` 安装别人分享的技能。
-- **P4-3 多 Agent 会话协作**：多个 Agent 实例可同步共享记忆和技能变更，实现“团队记忆”。
+- **P4-2 已完成：技能市场与社区共享**：定义技能包标准，支持 `yizutt skill install <url>` 安装别人分享的技能。
+
+**完成情况**：已新增 `python/yizutt_agi/skill_market.py`，定义最小技能包标准：目录内包含 `skill.json` 和 `SKILL.md`，manifest 字段包含 `name`、`version`、`description`、`skill_file`。`pyproject.toml` 增加 `yizutt = "yizutt_agi.skill_market:main"` 入口。CLI 支持 `yizutt skill install <path-or-url>` 和 `yizutt skill list`；MVP 已支持本地路径、单个 `SKILL.md` 文件和远程 URL。新增 `examples/skills/echo-skill` 作为可安装示例包。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
+- 安装示例技能包：`PYTHONPATH=python python -m yizutt_agi.skill_market skill install examples/skills/echo-skill --skills-root .yizutt/skill-test`
+- 列出已安装技能包：`PYTHONPATH=python python -m yizutt_agi.skill_market skill list --skills-root .yizutt/skill-test`
+
+- **P4-3 当前执行：多 Agent 会话协作**：多个 Agent 实例可同步共享记忆和技能变更，实现“团队记忆”。
 - **P4-4 跨技能组合与自动化工作流**：从多个独立技能中自动发现可串联的“技能链”，生成复合模板。
 
 ## 七、常用开发命令

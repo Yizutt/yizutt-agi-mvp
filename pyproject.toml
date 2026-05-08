@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
+yizutt = "yizutt_agi.skill_market:main"
 yizutt-panel = "yizutt_agi.panel:main"
 yizutt-panel_cnzh = "yizutt_agi.panel:main"
 yizutt-panel_twzh = "yizutt_agi.panel:main"
