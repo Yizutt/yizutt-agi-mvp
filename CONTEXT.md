@@ -50,7 +50,28 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 执行规则：按优先级从 P0 到 P2 顺序执行。完成一个任务后，同步第二、三、五、六节，并把下一个未完成任务标记为“当前执行”。
 
-### P0-1 当前执行：实现最小 Leader/Orchestrator 任务分解能力
+### P0-0 当前执行：增加 Wed 面板
+
+**目标**：为 Yizutt AGI 增加一个最小可运行的本地 Wed 面板，用于查看 Runtime 状态、提交任务、查看任务 trace、查看记忆和技能摘要，作为后续人机协作入口。
+
+**建议涉及文件**：
+- `web/` 或 `panel/`：新增前端面板代码，优先选择轻量方案，避免引入重型框架。
+- `crates/yizutt-runtime/src/main.rs`：如面板需要本地 HTTP API 或静态文件服务，可在 Runtime 侧增加最小桥接能力。
+- `proto/yizutt.proto`：只有在现有 `submit/status` 能力不足时才扩展，并保持向后兼容。
+- `README.md`、`README_CN.md`、`CONTEXT.md`：完成后补充启动方式、访问地址和下一任务。
+
+**验收标准**：
+- 能在本地启动面板，并通过浏览器访问。
+- 面板可配置 Runtime 地址，默认指向 `http://127.0.0.1:50200`。
+- 面板能显示 Runtime/Worker 状态。
+- 面板能提交一个任务，并展示返回结果或 trace 摘要。
+- 面板能展示最近记忆和技能文件摘要，MVP 阶段允许只读。
+- 不在前端暴露 OpenAI、Anthropic 或其他模型 API key。
+- 提供手动验证命令：启动 Runtime、启动面板、提交任务、查看状态。
+
+**非目标**：不做账号系统；不做远程云部署；不做复杂权限管理；不做完整任务编排 UI。
+
+### P0-1 待执行：实现最小 Leader/Orchestrator 任务分解能力
 
 **目标**：在不重写 Runtime 架构的前提下，让复杂任务先生成结构化子任务计划，再由现有 Worker/sidecar 通路逐步执行或返回明确计划。
 
