@@ -1,32 +1,46 @@
 # Nexus AGI MVP
 
-Nexus AGI MVP is a small runnable skeleton for an evolvable terminal agent runtime.
+Nexus AGI MVP is a runnable prototype for an evolvable terminal-agent runtime. It combines a Rust gRPC runtime and worker pool with a Python sidecar that handles model calls, working memory, and reusable skill files.
 
-The Rust layer owns the core runtime, local gRPC protocol, worker process isolation, and WorkerPool scheduling. The Python layer owns high-level APIs, model gateway adapters, skill files, and SQLite FTS5 working memory.
+This repository is intentionally small. Its goal is to prove the core loop:
 
-## Layout
+`submit task -> schedule worker -> run Python sidecar -> call model gateway -> write memory -> save skill -> return trace`
+
+## Features
+
+- Rust runtime with local gRPC services for task submission and worker status.
+- WorkerPool with basic dynamic scale-up when all healthy workers are busy.
+- `clap` based CLI with explicit `run`, `submit`, and `status` commands.
+- Python TaskExecutor sidecar launched by Rust workers for real task execution.
+- Model gateway adapters for OpenAI, Anthropic, OpenAI-compatible local proxies, and a placeholder local endpoint.
+- SQLite FTS5 working memory with extra tokenized search for Chinese and English queries.
+- Skill persistence as `SKILL.md` files.
+- Real task-memory-skill loop through `python -m nexus_agi.real_loop`.
+
+## Repository Layout
 
 - `proto/nexus.proto` defines `RuntimeService` and `WorkerService`.
-- `crates/nexus-runtime` runs either the runtime server, a worker process, or a small CLI client.
-- `python/nexus_agi/executor.py` is the Python sidecar used by Rust workers for real task execution.
-- `python/nexus_agi/model_gateway.py` exposes one interface for OpenAI, Anthropic, and a future local model endpoint.
+- `crates/nexus-runtime` contains the Rust runtime, worker process, CLI client, and WorkerPool.
+- `python/nexus_agi/executor.py` is the Python sidecar used by Rust workers.
+- `python/nexus_agi/model_gateway.py` provides one model gateway interface.
+- `python/nexus_agi/memory.py` stores cross-session working memory in SQLite FTS5.
 - `python/nexus_agi/skills.py` stores reusable skills as `SKILL.md` files.
-- `python/nexus_agi/memory.py` stores cross-session working memory in SQLite with FTS5.
-- `python/nexus_agi/client.py` calls the Rust runtime CLI, which in turn talks to the runtime over local gRPC.
+- `python/nexus_agi/real_loop.py` runs one direct model-memory-skill loop without starting the Rust runtime.
+- `python/nexus_agi/client.py` calls the Rust runtime CLI from Python.
 
 ## Install
 
-Install Rust and Python 3.11 or newer. Then run:
+Install Rust and Python 3.11 or newer. Then build the Rust runtime:
 
 `cargo build`
 
-For the Python package:
+Install the Python package in editable mode:
 
 `python -m pip install -e .`
 
 The Rust build uses a vendored `protoc`, so a system `protoc` binary is not required.
 
-## Run
+## Quick Start
 
 Start the runtime:
 
@@ -42,19 +56,11 @@ Check pool status:
 
 Run the Python demo after the runtime is running:
 
-`python -m nexus_agi.demo`
-
-If you run the runtime on a non-default address, pass it to Python with `NEXUS_RUNTIME_ADDR`, for example:
-
 `NEXUS_RUNTIME_ADDR=http://127.0.0.1:50200 python -m nexus_agi.demo`
 
-## Model gateway
+## Model Gateway
 
-Set `OPENAI_API_KEY` and optionally `NEXUS_OPENAI_MODEL` for OpenAI. Set `ANTHROPIC_API_KEY` and optionally `NEXUS_ANTHROPIC_MODEL` for Anthropic. Set `NEXUS_LOCAL_MODEL_URL` to reserve a local model endpoint.
-
-The real model loop executes one task through the model gateway, writes the task, answer, and trace to SQLite FTS5 working memory, then stores the successful path as a reusable skill file.
-
-For OpenAI:
+OpenAI:
 
 `export OPENAI_API_KEY=sk-...`
 
@@ -62,7 +68,7 @@ For OpenAI:
 
 `python -m nexus_agi.real_loop --provider openai --task "Summarize the Nexus AGI MVP architecture in five bullets."`
 
-For Anthropic:
+Anthropic:
 
 `export ANTHROPIC_API_KEY=sk-ant-...`
 
@@ -70,9 +76,7 @@ For Anthropic:
 
 `python -m nexus_agi.real_loop --provider anthropic --task "Summarize the Nexus AGI MVP architecture in five bullets."`
 
-The command prints JSON with `session_id`, selected provider/model, answer, `skill_path`, and memory hit count. API keys are read from the environment and are never printed.
-
-For an OpenAI-compatible local proxy such as CLI Proxy API:
+OpenAI-compatible local proxy:
 
 `export NEXUS_OPENAI_BASE_URL=http://127.0.0.1:48327/v1`
 
@@ -80,9 +84,9 @@ For an OpenAI-compatible local proxy such as CLI Proxy API:
 
 `python -m nexus_agi.real_loop --provider openai --task "Complete one Nexus AGI task-memory-skill loop."`
 
-When `NEXUS_OPENAI_BASE_URL` is not the official OpenAI URL, Nexus uses chat completions automatically. It reads `OPENAI_API_KEY` first and falls back to `PROXY_API_KEY` for local proxy authentication.
+When `NEXUS_OPENAI_BASE_URL` is not the official OpenAI URL, Nexus uses chat completions automatically. It reads `OPENAI_API_KEY` first and falls back to `PROXY_API_KEY` for local proxy authentication. API keys are read from the environment and are never printed.
 
-## Worker sidecar
+## Worker Sidecar
 
 Runtime workers execute tasks by spawning the Python sidecar:
 
@@ -90,10 +94,40 @@ Runtime workers execute tasks by spawning the Python sidecar:
 
 The sidecar emits JSON trace events to stdout, calls the model gateway, writes task and answer messages to SQLite working memory, and saves the successful execution path as a skill file. The Rust worker collects those events and returns them in `trace.events`.
 
-## Memory search
+Current trace delivery is aggregated in a single gRPC reply. Server-streaming traces are a planned protocol upgrade.
+
+## Memory Search
 
 Working memory stores the original message text plus a tokenized FTS5 index for Chinese and English search. Chinese queries such as `技能`, `运行`, and `运行时` are routed through the tokenized field; English queries continue to work through both original content and token indexes.
 
-## MVP boundaries
+Generated memory databases and skill outputs are stored under `.nexus/`, which is ignored by Git.
 
-This skeleton intentionally keeps the runtime small. Worker sandboxes are local child processes with separate working directories. The WorkerPool performs basic dynamic scale-up when all healthy workers are busy. It does not yet implement cgroups, containers, remote workers, server-streaming traces, long-running tool execution, LoRA training jobs, graph memory, or production-grade backpressure.
+## Verified Behavior
+
+The current prototype has been run locally with:
+
+- `cargo build`
+- `cargo check`
+- `python -m py_compile python/nexus_agi/*.py`
+- `target/debug/nexus-runtime --help`
+- `target/debug/nexus-runtime run`
+- `target/debug/nexus-runtime submit`
+- Python sidecar execution through an OpenAI-compatible local proxy
+- Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`
+
+## MVP Boundaries
+
+This is not a production agent runtime yet. Worker sandboxes are local child processes with separate working directories. The WorkerPool performs basic dynamic scale-up but does not yet implement cgroups, containers, remote workers, durable queues, server-streaming traces, long-running tool execution, LoRA training jobs, graph memory, or production-grade backpressure.
+
+## Roadmap
+
+- Add gRPC server-streaming trace APIs.
+- Add structured tool execution and cancellation.
+- Add stronger worker isolation with containers or OS sandboxing.
+- Add health checks that actively probe sidecar execution.
+- Add graph memory and skill ranking.
+- Add CI for Rust and Python checks.
+
+## License
+
+No license has been selected yet. Add a license before using this as a public open-source project.
