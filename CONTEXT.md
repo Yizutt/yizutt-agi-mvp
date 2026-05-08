@@ -23,6 +23,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **主动健康检查**：Runtime `status` 会主动探测 Worker RPC 和 Python sidecar 导入状态，任务级错误返回 `status: "error"`，不再误杀 Worker。
 - **开源许可证**：仓库根目录已添加 MIT `LICENSE`，README 和中文说明已同步许可证信息。
 - **基础 CI**：GitHub Actions 会在 push 到 `main` 和 pull request 时运行 Rust 与 Python 基础检查。
+- **端到端本地 Mock Demo**：`examples/local_mock_model.py` 可提供无 API key 的确定性模型端点，README 已给出 Runtime、工具调用、记忆查询和技能生成的完整流程。
 
 ## 三、关键文件与模块
 
@@ -52,7 +53,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **端到端示例不足**：文档还缺少一条从启动 Runtime 到提交任务、工具调用、记忆查询和技能生成的完整可复制 demo。
+3. **技能进化质量控制不足**：技能保存后没有 replay 验证、去重合并和激活状态机。
 
 ## 六、当前任务队列
 
@@ -205,7 +206,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - `cargo build --workspace --locked`
 - `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`
 
-### P2-1 当前执行：补充端到端使用示例
+### P2-1 已完成：补充端到端使用示例
 
 **目标**：把本地代理、Runtime 启动、任务提交、工具调用、记忆查询、技能文件生成串成一个可复制的 demo 流程。
 
@@ -219,9 +220,18 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 示例不要求暴露真实 API key。
 - 明确说明生成物位于 `.yizutt/` 且不会提交。
 
+**完成情况**：已新增 `examples/local_mock_model.py`，提供确定性本地模型端点，不需要 OpenAI/Anthropic API key。`README.md` 和 `README_CN.md` 已补充三终端端到端流程：启动 mock 模型、启动 Runtime、提交触发 `read_file` 的任务、查询 FTS5 工作记忆、确认技能文件生成，并说明 `.yizutt/` 为本地忽略目录。
+
+**手动验证命令**：
+- 终端 1：`PYTHONPATH=python python examples/local_mock_model.py --port 50990`
+- 终端 2：`PYTHONPATH=python YIZUTT_LOCAL_MODEL_URL=http://127.0.0.1:50990 target/debug/yizutt-runtime run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 2`
+- 终端 3：`target/debug/yizutt-runtime submit --addr http://127.0.0.1:50200 --session e2e-local --task "Use the read_file tool to read README.md, then summarize the project in one sentence." --context-json '{"provider":"local","max_tool_steps":2,"skill_name":"e2e-local-mock"}'`
+- 记忆查询：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import json; mem=WorkingMemory(); print(json.dumps(mem.search_text("local mock README", limit=3), ensure_ascii=False, indent=2)); mem.close()'`
+- 技能检查：`rg --files .yizutt/skills | rg "e2e-local-mock|SKILL.md"`
+
 ### P3 待执行（记忆与进化深化）
 
-- **P3-1 技能质量验证与防膨胀**：保存技能前用简单 replay 验证可重复性，相似技能自动去重/合并，引入“草稿→验证→激活”状态机。
+- **P3-1 当前执行：技能质量验证与防膨胀**：保存技能前用简单 replay 验证可重复性，相似技能自动去重/合并，引入“草稿→验证→激活”状态机。
 - **P3-2 Graph Memory（知识图谱）**：在 FTS5 之上增加实体和关系存储，支持跨会话的偏好、事实和项目关联查询。
 - **P3-3 向量记忆层**：引入本地向量引擎（FAISS 或 usearch），支持语义相似检索，弥补纯关键词匹配的不足。
 - **P3-4 训练数据收集与质量评分**：自动筛选高质量执行轨迹存入训练缓冲区，为未来 LoRA 微调做准备（不自动训练，仅收集）。

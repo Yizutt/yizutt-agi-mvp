@@ -35,6 +35,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - `python/yizutt_agi/real_loop.py` runs one direct model-memory-skill loop without starting the Rust runtime.
 - `python/yizutt_agi/client.py` calls the Rust runtime CLI from Python.
 - `web/panel/index.html` is the browser UI for the local panel.
+- `examples/local_mock_model.py` serves a deterministic local model endpoint for no-key end-to-end demos.
 
 ## Install
 
@@ -75,6 +76,32 @@ Global language defaults use short codes. `cnzh` is the default Simplified Chine
 Run the Python demo after the runtime is running:
 
 `YIZUTT_RUNTIME_ADDR=http://127.0.0.1:50200 python -m yizutt_agi.demo`
+
+## End-to-End Local Mock Demo
+
+This flow needs no real API key. It starts a deterministic local model endpoint, runs the Rust Runtime, submits a task that triggers the `read_file` tool, then verifies memory and skill outputs under `.yizutt/`.
+
+Terminal 1, start the mock model:
+
+`PYTHONPATH=python python examples/local_mock_model.py --port 50990`
+
+Terminal 2, start the runtime and point workers at the mock model:
+
+`PYTHONPATH=python YIZUTT_LOCAL_MODEL_URL=http://127.0.0.1:50990 target/debug/yizutt-runtime run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 2`
+
+Terminal 3, submit a tool-using task:
+
+`target/debug/yizutt-runtime submit --addr http://127.0.0.1:50200 --session e2e-local --task "Use the read_file tool to read README.md, then summarize the project in one sentence." --context-json '{"provider":"local","max_tool_steps":2,"skill_name":"e2e-local-mock"}'`
+
+Check that working memory can find the session result:
+
+`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import json; mem=WorkingMemory(); print(json.dumps(mem.search_text("local mock README", limit=3), ensure_ascii=False, indent=2)); mem.close()'`
+
+Check that a reusable skill file was generated:
+
+`rg --files .yizutt/skills | rg "e2e-local-mock|SKILL.md"`
+
+Generated `.yizutt/` memory databases, runtime worker folders, and skill files are local artifacts and are ignored by Git.
 
 ## Model Gateway
 
