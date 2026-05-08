@@ -16,7 +16,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - Python TaskExecutor sidecar launched by Rust workers for real task execution.
 - Model gateway adapters for OpenAI, Anthropic, OpenAI-compatible local proxies, and a placeholder local endpoint.
 - SQLite FTS5 working memory with extra tokenized search for Chinese and English queries.
-- Skill persistence as `SKILL.md` files.
+- Skill persistence as `SKILL.md` files with draft, replay-check, and active states.
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
 - Local Web panel for Runtime status, task submission, recent memory, skill summaries, and language switching.
 - Minimal Leader/Orchestrator planning that emits structured `plan_created` trace events for complex tasks.
@@ -171,6 +171,12 @@ Working memory stores the original message text plus a tokenized FTS5 index for 
 
 Generated memory databases and skill outputs are stored under `.yizutt/`, which is ignored by Git.
 
+## Skill Quality Control
+
+`SkillStore.save_skill()` now uses a minimal draft -> verified -> active flow. It renders a draft skill, replays the generated `SKILL.md` structure by parsing name, description, and numbered steps, and only marks the skill `active` when the replay check passes. Weak skills remain `draft` with `replay_check: failed` and are not returned by `skill_context()`.
+
+To prevent skill file growth, same-name skills and highly similar skills are merged. Existing steps are kept first, new unique steps are appended, and the final `SKILL.md` records `status`, `state_history`, `replay_check`, `updated_at`, and `similarity_score` in frontmatter.
+
 ## Verified Behavior
 
 GitHub Actions runs the core CI checks on push to `main` and on pull requests: `cargo check --workspace --locked`, `cargo build --workspace --locked`, and `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`.
@@ -188,6 +194,7 @@ The current prototype has been run locally with:
 - Leader/Orchestrator `plan_created` trace generation for a complex task
 - Tool loop execution with `read_file` returning the first README heading
 - Tool policy denial for hidden paths, writes, and commands, plus allowlisted command execution
+- Skill replay checks, draft rejection, and same-name skill merge behavior
 - Active health checks for healthy workers, sidecar import failures, and task-level error replies
 - Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`
 

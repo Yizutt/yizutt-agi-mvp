@@ -14,7 +14,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **Sidecar 执行通路**：Rust Worker 启动 Python 子进程执行任务，通信通过标准输出 JSON 轨迹。
 - **模型网关**：`model_gateway.py` 统一了 OpenAI / Anthropic / 本地模型的调用接口。
 - **中文记忆检索**：双 FTS5 索引（原文字段 + 分词字段），解决了 SQLite 默认分词的中文 0 命中问题。
-- **技能文件存储**：任务执行完成后可将成功路径保存为 `SKILL.md`。
+- **技能文件存储与质量控制**：任务执行完成后可将成功路径保存为 `SKILL.md`，并通过 draft -> verified -> active 流程做结构 replay 检查；同名或高相似技能会合并，草稿技能不会进入召回上下文。
 - **工具调用循环**：`executor.py` 支持模型返回 `tool_calls`，执行受控工具后继续下一轮模型调用。
 - **工具安全审计**：工具执行默认拒绝写文件、命令执行和内部路径访问，支持 `allowed_paths` 与 `allowed_commands` 显式授权，并在 trace 中记录脱敏参数摘要、允许状态和拒绝原因。
 - **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
@@ -53,7 +53,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **技能进化质量控制不足**：技能保存后没有 replay 验证、去重合并和激活状态机。
+3. **长期知识图谱缺失**：目前只有 FTS5 工作记忆，还没有实体、关系和跨会话事实图谱。
 
 ## 六、当前任务队列
 
@@ -231,8 +231,16 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 ### P3 待执行（记忆与进化深化）
 
-- **P3-1 当前执行：技能质量验证与防膨胀**：保存技能前用简单 replay 验证可重复性，相似技能自动去重/合并，引入“草稿→验证→激活”状态机。
-- **P3-2 Graph Memory（知识图谱）**：在 FTS5 之上增加实体和关系存储，支持跨会话的偏好、事实和项目关联查询。
+- **P3-1 已完成：技能质量验证与防膨胀**：保存技能前用简单 replay 验证可重复性，相似技能自动去重/合并，引入“草稿→验证→激活”状态机。
+
+**完成情况**：已在 `python/yizutt_agi/skills.py` 中增强 `SkillStore.save_skill()`。技能保存时先渲染 draft，再解析生成的 `SKILL.md` 做结构 replay 检查；通过后写入 active 状态，并记录 `state_history: draft,verified,active`、`replay_check: passed`、`updated_at` 和 `similarity_score`。过弱技能保留为 `draft` 且不会被 `skill_context()` 召回。同名技能和高相似技能会合并步骤，避免技能目录无限膨胀。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py`
+- 合并与激活：`PYTHONPATH=python python -c 'from yizutt_agi.skills import SkillStore; import tempfile, json; td=tempfile.TemporaryDirectory(); s=SkillStore(td.name); p1=s.save_skill("Summarize Repo", "Summarize a repository", ["Read the README", "Identify modules", "Return a concise summary"], "{}"); p2=s.save_skill("summarize-repo", "Summarize a repository", ["Read the README", "Return a concise summary", "Mention saved memory"], "{}"); items=s.list_skills(); print(json.dumps({"same_path": str(p1)==str(p2), "count": len(items), "status": items[0]["status"], "replay": items[0]["replay_check"], "context": s.skill_context("summarize repository")}, ensure_ascii=False)); td.cleanup()'`
+- 草稿拒绝召回：`PYTHONPATH=python python -c 'from yizutt_agi.skills import SkillStore; import tempfile, json; td=tempfile.TemporaryDirectory(); s=SkillStore(td.name); s.save_skill("weak", "too weak", ["Do it"], "{}"); item=s.list_skills()[0]; print(json.dumps({"status": item["status"], "replay": item["replay_check"], "context": s.skill_context("weak")}, ensure_ascii=False)); td.cleanup()'`
+
+- **P3-2 当前执行：Graph Memory（知识图谱）**：在 FTS5 之上增加实体和关系存储，支持跨会话的偏好、事实和项目关联查询。
 - **P3-3 向量记忆层**：引入本地向量引擎（FAISS 或 usearch），支持语义相似检索，弥补纯关键词匹配的不足。
 - **P3-4 训练数据收集与质量评分**：自动筛选高质量执行轨迹存入训练缓冲区，为未来 LoRA 微调做准备（不自动训练，仅收集）。
 - **P3-5 gRPC 流式 Trace API**：将当前一元返回改为 server-streaming，让调用方可实时观察 Agent 思考、工具调用和最终输出。
