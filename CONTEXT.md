@@ -27,6 +27,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **SQLite Graph Memory**：`memory.py` 在 FTS5 之外增加实体/关系表，自动抽取简单用户偏好和项目技术事实，支持跨会话图谱查询并向 executor/real_loop 注入图谱上下文。
 - **稀疏向量记忆**：`memory.py` 为每条消息持久化 `memory_vectors` 稀疏 token 向量，支持 cosine 相似检索，并向 executor/real_loop 注入 vector context。
 - **训练数据缓冲区**：成功执行轨迹会进入 SQLite `training_examples` 表，按简单质量规则评分并标记 accepted，为未来微调准备数据但不自动训练。
+- **gRPC 流式 Trace API**：`proto/yizutt.proto` 和 Runtime/Worker 已支持 `SubmitStream`/`ExecuteStream`，CLI 可用 `submit --stream` 实时输出事件，普通 `submit` 保持兼容。
 
 ## 三、关键文件与模块
 
@@ -56,7 +57,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **Trace 仍是一元返回**：调用方只能在任务结束后拿到聚合 trace，还不能实时观察工具调用和输出。
+3. **外部工具生态不足**：还没有 MCP 客户端，无法直接连接标准化外部工具服务器。
 
 ## 六、当前任务队列
 
@@ -267,11 +268,20 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py`
 - 训练缓冲区：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import tempfile, json; td=tempfile.TemporaryDirectory(); mem=WorkingMemory(td.name+"/work.sqlite3"); trace={"provider":"local","model":"mock","started_at":1,"finished_at":2,"tool_steps":[{"tool":"read_file"}]}; item=mem.record_training_example("s1", "Summarize the runtime architecture", "This answer explains the runtime architecture with enough detail for reuse.", trace); print(json.dumps({"accepted": item["accepted"], "score": item["quality_score"], "stored": len(mem.training_examples(accepted_only=True))}, ensure_ascii=False)); mem.close(); td.cleanup()'`
 
-- **P3-5 当前执行：gRPC 流式 Trace API**：将当前一元返回改为 server-streaming，让调用方可实时观察 Agent 思考、工具调用和最终输出。
+- **P3-5 已完成：gRPC 流式 Trace API**：将当前一元返回改为 server-streaming，让调用方可实时观察 Agent 思考、工具调用和最终输出。
+
+**完成情况**：已扩展 `proto/yizutt.proto`，新增 `TraceEvent`、`RuntimeService.SubmitStream` 和 `WorkerService.ExecuteStream`。`crates/yizutt-runtime/src/yizutt.rs` 已同步 tonic/prost 服务代码。Runtime 会代理 Worker 的流式事件；Worker 会边读取 Python sidecar stdout JSON 行边通过 gRPC stream 返回。CLI `submit --stream` 会逐条打印事件，最后一个事件带 `final: true`、聚合 trace 和最终 output。原有一元 `submit` 行为保持兼容。
+
+**手动验证命令**：
+- `cargo check --workspace --locked`
+- `cargo build --workspace --locked`
+- 终端 1：`PYTHONPATH=python python examples/local_mock_model.py --port 50990`
+- 终端 2：`PYTHONPATH=python YIZUTT_LOCAL_MODEL_URL=http://127.0.0.1:50990 target/debug/yizutt-runtime run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 2`
+- 终端 3：`target/debug/yizutt-runtime submit --stream --addr http://127.0.0.1:50200 --session stream-local --task "Use the read_file tool to read README.md, then summarize the project in one sentence." --context-json '{"provider":"local","max_tool_steps":2,"skill_name":"stream-local-mock"}'`
 
 ### P4 待执行（生态与协作）
 
-- **P4-1 MCP 协议支持**：在模型网关或 Agent 运行时增加 MCP 客户端，使 Yizutt 能直接调用标准化外部工具（文件系统、数据库、代码解释器等）。
+- **P4-1 当前执行：MCP 协议支持**：在模型网关或 Agent 运行时增加 MCP 客户端，使 Yizutt 能直接调用标准化外部工具（文件系统、数据库、代码解释器等）。
 - **P4-2 技能市场与社区共享**：定义技能包标准，支持 `yizutt skill install <url>` 安装别人分享的技能。
 - **P4-3 多 Agent 会话协作**：多个 Agent 实例可同步共享记忆和技能变更，实现“团队记忆”。
 - **P4-4 跨技能组合与自动化工作流**：从多个独立技能中自动发现可串联的“技能链”，生成复合模板。

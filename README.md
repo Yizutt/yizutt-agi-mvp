@@ -11,6 +11,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 ## Features
 
 - Rust runtime with local gRPC services for task submission and worker status.
+- Server-streaming trace API for observing task events while a worker is running.
 - WorkerPool with basic dynamic scale-up and active worker/sidecar health checks.
 - `clap` based CLI with explicit `run`, `submit`, and `status` commands.
 - Python TaskExecutor sidecar launched by Rust workers for real task execution.
@@ -59,6 +60,10 @@ Start the runtime:
 Submit a task from another terminal:
 
 `target/debug/yizutt-runtime submit --task "summarize repo architecture"`
+
+Stream trace events while a task is running:
+
+`target/debug/yizutt-runtime submit --stream --task "Use the read_file tool to read README.md, then summarize the project in one sentence." --context-json '{"provider":"local","max_tool_steps":2}'`
 
 Check pool status:
 
@@ -138,9 +143,9 @@ Runtime workers execute tasks by spawning the Python sidecar:
 
 `python -m yizutt_agi.executor --task-id test --worker-id worker-dev --session-id demo --task "Say hello" --context-json '{"provider":"openai"}'`
 
-The sidecar emits JSON trace events to stdout, calls the model gateway, writes task and answer messages to SQLite working memory, and saves the successful execution path as a skill file. The Rust worker collects those events and returns them in `trace.events`.
+The sidecar emits JSON trace events to stdout, calls the model gateway, writes task and answer messages to SQLite working memory, and saves the successful execution path as a skill file. The Rust worker collects those events and returns them in `trace.events` for normal `submit`; `submit --stream` returns the same events through gRPC server streaming as they arrive.
 
-Current trace delivery is aggregated in a single gRPC reply. Server-streaming traces are a planned protocol upgrade.
+The final stream item has `final: true`, includes the aggregated trace, and carries the final task output.
 
 ## Leader / Orchestrator
 
@@ -218,6 +223,7 @@ The current prototype has been run locally with:
 - `target/debug/yizutt-runtime submit`
 - Python sidecar execution through an OpenAI-compatible local proxy
 - Local Web panel status, task submission, memory, skill APIs, and language switching
+- gRPC `submit --stream` trace events for accepted, tool calls, tool results, training records, completion, and final output
 - Leader/Orchestrator `plan_created` trace generation for a complex task
 - Tool loop execution with `read_file` returning the first README heading
 - Tool policy denial for hidden paths, writes, and commands, plus allowlisted command execution
@@ -234,7 +240,7 @@ This is not a production agent runtime yet. Worker sandboxes are local child pro
 
 ## Roadmap
 
-- Add gRPC server-streaming trace APIs.
+- Add richer stream consumers in the Web panel.
 - Add richer tool execution cancellation and sandboxing.
 - Add stronger worker isolation with containers or OS sandboxing.
 - Add richer graph reasoning and skill ranking.

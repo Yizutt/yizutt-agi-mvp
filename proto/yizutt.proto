@@ -4,11 +4,13 @@ package yizutt;
 
 service RuntimeService {
   rpc Submit(TaskRequest) returns (TaskReply);
+  rpc SubmitStream(TaskRequest) returns (stream TraceEvent);
   rpc PoolStatus(Empty) returns (PoolStatusReply);
 }
 
 service WorkerService {
   rpc Execute(TaskRequest) returns (TaskReply);
+  rpc ExecuteStream(TaskRequest) returns (stream TraceEvent);
   rpc Health(Empty) returns (WorkerHealth);
 }
 
@@ -26,6 +28,15 @@ message TaskReply {
   string status = 3;
   string output = 4;
   string trace_json = 5;
+}
+
+message TraceEvent {
+  string task_id = 1;
+  string worker_id = 2;
+  string event_json = 3;
+  bool final_event = 4;
+  string status = 5;
+  string output = 6;
 }
 
 message WorkerHealth {

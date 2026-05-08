@@ -8,9 +8,11 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use tokio::sync::{mpsc, Mutex};
 use tokio::time::{sleep, timeout, Duration};
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -21,7 +23,7 @@ use yizutt::runtime_service_client::RuntimeServiceClient;
 use yizutt::runtime_service_server::{RuntimeService, RuntimeServiceServer};
 use yizutt::worker_service_client::WorkerServiceClient;
 use yizutt::worker_service_server::{WorkerService, WorkerServiceServer};
-use yizutt::{Empty, PoolStatusReply, TaskReply, TaskRequest, WorkerHealth, WorkerSnapshot};
+use yizutt::{Empty, PoolStatusReply, TaskReply, TaskRequest, TraceEvent, WorkerHealth, WorkerSnapshot};
 
 #[derive(Parser, Debug)]
 #[command(name = "yizutt-runtime", version, about = "Yizutt AGI local runtime")]
@@ -71,6 +73,8 @@ enum Commands {
         session: String,
         #[arg(long, default_value = "{}")]
         context_json: String,
+        #[arg(long)]
+        stream: bool,
     },
     /// Print worker pool status from a running runtime.
     Status {
@@ -285,6 +289,8 @@ struct RuntimeServer {
 
 #[tonic::async_trait]
 impl RuntimeService for RuntimeServer {
+    type SubmitStreamStream = ReceiverStream<std::result::Result<TraceEvent, Status>>;
+
     async fn submit(
         &self,
         request: Request<TaskRequest>,
@@ -320,6 +326,56 @@ impl RuntimeService for RuntimeServer {
         call_result.map(Response::new)
     }
 
+    async fn submit_stream(
+        &self,
+        request: Request<TaskRequest>,
+    ) -> std::result::Result<Response<Self::SubmitStreamStream>, Status> {
+        let task = request.into_inner();
+        let (idx, addr, worker_id) = {
+            let mut pool = self.pool.lock().await;
+            let idx = pool.choose_worker().await.map_err(anyhow_to_status)?;
+            pool.workers[idx].inflight += 1;
+            (
+                idx,
+                pool.workers[idx].addr.clone(),
+                pool.workers[idx].id.clone(),
+            )
+        };
+        let pool = self.pool.clone();
+        let (tx, rx) = mpsc::channel(32);
+        tokio::spawn(async move {
+            let call_result = async {
+                let mut client = WorkerServiceClient::connect(addr.clone())
+                    .await
+                    .map_err(|e| Status::unavailable(e.to_string()))?;
+                let mut stream = client
+                    .execute_stream(Request::new(task))
+                    .await?
+                    .into_inner();
+                while let Some(event) = stream.message().await? {
+                    if tx.send(Ok(event)).await.is_err() {
+                        break;
+                    }
+                }
+                Ok::<(), Status>(())
+            }
+            .await;
+            {
+                let mut pool = pool.lock().await;
+                if let Some(w) = pool.workers.get_mut(idx) {
+                    w.inflight = w.inflight.saturating_sub(1);
+                }
+                if let Err(err) = &call_result {
+                    pool.mark_failed(&worker_id, &err.to_string()).await;
+                }
+            }
+            if let Err(err) = call_result {
+                let _ = tx.send(Err(err)).await;
+            }
+        });
+        Ok(Response::new(ReceiverStream::new(rx)))
+    }
+
     async fn pool_status(
         &self,
         _request: Request<Empty>,
@@ -343,6 +399,8 @@ struct WorkerServer {
 
 #[tonic::async_trait]
 impl WorkerService for WorkerServer {
+    type ExecuteStreamStream = ReceiverStream<std::result::Result<TraceEvent, Status>>;
+
     async fn execute(
         &self,
         request: Request<TaskRequest>,
@@ -373,6 +431,20 @@ impl WorkerService for WorkerServer {
                 }))
             }
         }
+    }
+
+    async fn execute_stream(
+        &self,
+        request: Request<TaskRequest>,
+    ) -> std::result::Result<Response<Self::ExecuteStreamStream>, Status> {
+        let req = request.into_inner();
+        let task_id = Uuid::new_v4().to_string();
+        Ok(Response::new(execute_sidecar_stream(
+            self.id.clone(),
+            task_id,
+            req,
+            self.task_timeout_secs,
+        )))
     }
 
     async fn health(
@@ -490,6 +562,182 @@ async fn execute_sidecar(
     })
 }
 
+fn execute_sidecar_stream(
+    worker_id: String,
+    task_id: String,
+    req: TaskRequest,
+    timeout_secs: u64,
+) -> ReceiverStream<std::result::Result<TraceEvent, Status>> {
+    let (tx, rx) = mpsc::channel(32);
+    tokio::spawn(async move {
+        let error_task_id = task_id.clone();
+        let error_worker_id = worker_id.clone();
+        let stream_tx = tx.clone();
+        let run_result = timeout(
+            Duration::from_secs(timeout_secs),
+            async move {
+                let started_at = Utc::now().to_rfc3339();
+                let context = serde_json::from_str::<Value>(&req.context_json).unwrap_or(json!({}));
+                let python = env::var("YIZUTT_PYTHON").unwrap_or_else(|_| "python".to_string());
+                let mut child = Command::new(python)
+                    .arg("-m")
+                    .arg("yizutt_agi.executor")
+                    .arg("--task-id")
+                    .arg(&task_id)
+                    .arg("--worker-id")
+                    .arg(&worker_id)
+                    .arg("--session-id")
+                    .arg(&req.session_id)
+                    .arg("--task")
+                    .arg(&req.task)
+                    .arg("--context-json")
+                    .arg(&req.context_json)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .kill_on_drop(true)
+                    .spawn()
+                    .with_context(|| "spawn python sidecar for stream")?;
+                let stdout = child
+                    .stdout
+                    .take()
+                    .ok_or_else(|| anyhow!("python sidecar stdout was not captured"))?;
+                let stderr = child.stderr.take();
+                let stderr_task = tokio::spawn(async move {
+                    let mut text = String::new();
+                    if let Some(mut stderr) = stderr {
+                        let _ = stderr.read_to_string(&mut text).await;
+                    }
+                    text
+                });
+                let mut lines = BufReader::new(stdout).lines();
+                let mut events = Vec::new();
+                let mut final_output = String::new();
+                while let Some(line) = lines.next_line().await? {
+                    if line.trim().is_empty() {
+                        continue;
+                    }
+                    let event = serde_json::from_str::<Value>(&line).unwrap_or_else(|_| {
+                        json!({
+                            "event_type": "stdout",
+                            "payload": line,
+                            "timestamp": Utc::now().to_rfc3339()
+                        })
+                    });
+                    if event.get("event_type").and_then(Value::as_str) == Some("output") {
+                        if let Some(payload) = event.get("payload").and_then(Value::as_str) {
+                            final_output.push_str(payload);
+                        }
+                    }
+                    if event.get("event_type").and_then(Value::as_str) == Some("completed")
+                        && final_output.is_empty()
+                    {
+                        if let Some(payload) = event.get("payload").and_then(Value::as_str) {
+                            final_output.push_str(payload);
+                        }
+                    }
+                    events.push(event.clone());
+                    if stream_tx
+                        .send(Ok(TraceEvent {
+                            task_id: task_id.clone(),
+                            worker_id: worker_id.clone(),
+                            event_json: event.to_string(),
+                            final_event: false,
+                            status: "event".to_string(),
+                            output: String::new(),
+                        }))
+                        .await
+                        .is_err()
+                    {
+                        return Ok::<(), anyhow::Error>(());
+                    }
+                }
+                let status = child.wait().await?;
+                let stderr = stderr_task.await.unwrap_or_default();
+                let finished_at = Utc::now().to_rfc3339();
+                let trace = json!({
+                    "task_id": task_id,
+                    "session_id": req.session_id,
+                    "worker_id": worker_id,
+                    "started_at": started_at,
+                    "finished_at": finished_at,
+                    "context": context,
+                    "events": events,
+                    "stderr": stderr.trim(),
+                    "sidecar_status": status.code()
+                });
+                let stream_status = if status.success() { "ok" } else { "error" };
+                if final_output.is_empty() {
+                    final_output = if status.success() {
+                        "task completed without output".to_string()
+                    } else {
+                        format!("python sidecar failed: {}", stderr.trim())
+                    };
+                }
+                let _ = stream_tx
+                    .send(Ok(TraceEvent {
+                        task_id: trace
+                            .get("task_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        worker_id: trace
+                            .get("worker_id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        event_json: trace.to_string(),
+                        final_event: true,
+                        status: stream_status.to_string(),
+                        output: final_output,
+                    }))
+                    .await;
+                Ok::<(), anyhow::Error>(())
+            },
+        )
+        .await;
+        match run_result {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                let event = json!({
+                    "event_type": "error",
+                    "payload": err.to_string(),
+                    "timestamp": Utc::now().to_rfc3339()
+                });
+                let _ = tx
+                    .send(Ok(TraceEvent {
+                        task_id: error_task_id,
+                        worker_id: error_worker_id,
+                        event_json: event.to_string(),
+                        final_event: true,
+                        status: "error".to_string(),
+                        output: err.to_string(),
+                    }))
+                    .await;
+            }
+            Err(_) => {
+                let message = format!("task timed out after {timeout_secs}s");
+                let event = json!({
+                    "event_type": "error",
+                    "payload": message,
+                    "timestamp": Utc::now().to_rfc3339()
+                });
+                let _ = tx
+                    .send(Ok(TraceEvent {
+                        task_id: error_task_id,
+                        worker_id: error_worker_id,
+                        event_json: event.to_string(),
+                        final_event: true,
+                        status: "error".to_string(),
+                        output: message,
+                    }))
+                    .await;
+            }
+        }
+    });
+    ReceiverStream::new(rx)
+}
+
 async fn probe_python_sidecar(timeout_secs: u64) -> Result<()> {
     let python = env::var("YIZUTT_PYTHON").unwrap_or_else(|_| "python".to_string());
     let output = timeout(
@@ -588,8 +836,36 @@ async fn run_submit(
     task: String,
     session_id: String,
     context_json: String,
+    stream: bool,
 ) -> Result<()> {
     let mut client = RuntimeServiceClient::connect(addr).await?;
+    if stream {
+        let mut events = client
+            .submit_stream(Request::new(TaskRequest {
+                session_id,
+                task,
+                context_json,
+            }))
+            .await?
+            .into_inner();
+        while let Some(event) = events.message().await? {
+            let event_json = serde_json::from_str::<Value>(&event.event_json).unwrap_or(json!({
+                "raw": event.event_json
+            }));
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&json!({
+                    "task_id": event.task_id,
+                    "worker_id": event.worker_id,
+                    "status": event.status,
+                    "final": event.final_event,
+                    "output": event.output,
+                    "event": event_json
+                }))?
+            );
+        }
+        return Ok(());
+    }
     let reply = client
         .submit(Request::new(TaskRequest {
             session_id,
@@ -685,7 +961,8 @@ async fn main() -> Result<()> {
             task,
             session,
             context_json,
-        } => run_submit(addr, task, session, context_json).await,
+            stream,
+        } => run_submit(addr, task, session, context_json, stream).await,
         Commands::Status { addr } => run_status(addr).await,
     }
 }

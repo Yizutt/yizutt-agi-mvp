@@ -26,6 +26,22 @@ pub struct TaskReply {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
+pub struct TraceEvent {
+    #[prost(string, tag = "1")]
+    pub task_id: String,
+    #[prost(string, tag = "2")]
+    pub worker_id: String,
+    #[prost(string, tag = "3")]
+    pub event_json: String,
+    #[prost(bool, tag = "4")]
+    pub final_event: bool,
+    #[prost(string, tag = "5")]
+    pub status: String,
+    #[prost(string, tag = "6")]
+    pub output: String,
+}
+
+#[derive(Clone, PartialEq, ::prost::Message)]
 pub struct WorkerHealth {
     #[prost(string, tag = "1")]
     pub worker_id: String,
@@ -66,7 +82,7 @@ pub struct PoolStatusReply {
 }
 
 pub mod runtime_service_client {
-    use super::{Empty, PoolStatusReply, TaskReply, TaskRequest};
+    use super::{Empty, PoolStatusReply, TaskReply, TaskRequest, TraceEvent};
     use tonic::codegen::*;
 
     #[derive(Debug, Clone)]
@@ -115,6 +131,23 @@ pub mod runtime_service_client {
                 .await
         }
 
+        pub async fn submit_stream(
+            &mut self,
+            request: impl tonic::IntoRequest<TaskRequest>,
+        ) -> Result<tonic::Response<tonic::codec::Streaming<TraceEvent>>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("service was not ready: {}", e.into()))
+            })?;
+            let path = http::uri::PathAndQuery::from_static("/yizutt.RuntimeService/SubmitStream");
+            self.inner
+                .server_streaming(
+                    request.into_request(),
+                    path,
+                    tonic_prost::ProstCodec::default(),
+                )
+                .await
+        }
+
         pub async fn pool_status(
             &mut self,
             request: impl tonic::IntoRequest<Empty>,
@@ -135,7 +168,7 @@ pub mod runtime_service_client {
 }
 
 pub mod worker_service_client {
-    use super::{Empty, TaskReply, TaskRequest, WorkerHealth};
+    use super::{Empty, TaskReply, TaskRequest, TraceEvent, WorkerHealth};
     use tonic::codegen::*;
 
     #[derive(Debug, Clone)]
@@ -184,6 +217,23 @@ pub mod worker_service_client {
                 .await
         }
 
+        pub async fn execute_stream(
+            &mut self,
+            request: impl tonic::IntoRequest<TaskRequest>,
+        ) -> Result<tonic::Response<tonic::codec::Streaming<TraceEvent>>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::unknown(format!("service was not ready: {}", e.into()))
+            })?;
+            let path = http::uri::PathAndQuery::from_static("/yizutt.WorkerService/ExecuteStream");
+            self.inner
+                .server_streaming(
+                    request.into_request(),
+                    path,
+                    tonic_prost::ProstCodec::default(),
+                )
+                .await
+        }
+
         #[allow(dead_code)]
         pub async fn health(
             &mut self,
@@ -205,7 +255,7 @@ pub mod worker_service_client {
 }
 
 pub mod runtime_service_server {
-    use super::{Empty, PoolStatusReply, TaskReply, TaskRequest};
+    use super::{Empty, PoolStatusReply, TaskReply, TaskRequest, TraceEvent};
     use std::sync::Arc;
     use std::task::{Context, Poll};
     use tonic::codegen::*;
@@ -216,6 +266,15 @@ pub mod runtime_service_server {
             &self,
             request: tonic::Request<TaskRequest>,
         ) -> Result<tonic::Response<TaskReply>, tonic::Status>;
+
+        type SubmitStreamStream: tonic::codegen::tokio_stream::Stream<Item = Result<TraceEvent, tonic::Status>>
+            + Send
+            + 'static;
+
+        async fn submit_stream(
+            &self,
+            request: tonic::Request<TaskRequest>,
+        ) -> Result<tonic::Response<Self::SubmitStreamStream>, tonic::Status>;
 
         async fn pool_status(
             &self,
@@ -279,6 +338,26 @@ pub mod runtime_service_server {
                         Ok(grpc.unary(method, req).await)
                     })
                 }
+                "/yizutt.RuntimeService/SubmitStream" => {
+                    struct SubmitStreamSvc<T: RuntimeService>(pub Arc<T>);
+                    impl<T: RuntimeService> tonic::server::ServerStreamingService<TaskRequest> for SubmitStreamSvc<T> {
+                        type Response = TraceEvent;
+                        type ResponseStream = T::SubmitStreamStream;
+                        type Future = BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+                        fn call(&mut self, request: tonic::Request<TaskRequest>) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move { inner.submit_stream(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let inner = self.inner.clone();
+                    Box::pin(async move {
+                        let method = SubmitStreamSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec);
+                        Ok(grpc.server_streaming(method, req).await)
+                    })
+                }
                 "/yizutt.RuntimeService/PoolStatus" => {
                     struct PoolStatusSvc<T: RuntimeService>(pub Arc<T>);
                     impl<T: RuntimeService> tonic::server::UnaryService<Empty> for PoolStatusSvc<T> {
@@ -322,7 +401,7 @@ pub mod runtime_service_server {
 }
 
 pub mod worker_service_server {
-    use super::{Empty, TaskReply, TaskRequest, WorkerHealth};
+    use super::{Empty, TaskReply, TaskRequest, TraceEvent, WorkerHealth};
     use std::sync::Arc;
     use std::task::{Context, Poll};
     use tonic::codegen::*;
@@ -333,6 +412,15 @@ pub mod worker_service_server {
             &self,
             request: tonic::Request<TaskRequest>,
         ) -> Result<tonic::Response<TaskReply>, tonic::Status>;
+
+        type ExecuteStreamStream: tonic::codegen::tokio_stream::Stream<Item = Result<TraceEvent, tonic::Status>>
+            + Send
+            + 'static;
+
+        async fn execute_stream(
+            &self,
+            request: tonic::Request<TaskRequest>,
+        ) -> Result<tonic::Response<Self::ExecuteStreamStream>, tonic::Status>;
 
         async fn health(
             &self,
@@ -394,6 +482,26 @@ pub mod worker_service_server {
                         let codec = tonic_prost::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec);
                         Ok(grpc.unary(method, req).await)
+                    })
+                }
+                "/yizutt.WorkerService/ExecuteStream" => {
+                    struct ExecuteStreamSvc<T: WorkerService>(pub Arc<T>);
+                    impl<T: WorkerService> tonic::server::ServerStreamingService<TaskRequest> for ExecuteStreamSvc<T> {
+                        type Response = TraceEvent;
+                        type ResponseStream = T::ExecuteStreamStream;
+                        type Future = BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+                        fn call(&mut self, request: tonic::Request<TaskRequest>) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move { inner.execute_stream(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let inner = self.inner.clone();
+                    Box::pin(async move {
+                        let method = ExecuteStreamSvc(inner);
+                        let codec = tonic_prost::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec);
+                        Ok(grpc.server_streaming(method, req).await)
                     })
                 }
                 "/yizutt.WorkerService/Health" => {
