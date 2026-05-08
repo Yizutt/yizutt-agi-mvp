@@ -25,6 +25,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - Audited tool policy with path allowlists, command allowlists, and default denial for writes, commands, and internal directories.
 - Minimal MCP stdio client exposed as a gated `mcp_call` executor tool.
 - Skill package installer with `yizutt skill install <path-or-url>`.
+- Team memory bundle export/import for sharing memory and skills across agent workspaces.
 
 ## Repository Layout
 
@@ -227,6 +228,18 @@ Manual check:
 
 `PYTHONPATH=python python -m yizutt_agi.skill_market skill list --skills-root .yizutt/skill-test`
 
+## Team Sync
+
+`team_sync.py` exports a portable zip bundle containing memory messages and skill packages. Another Yizutt workspace can import the bundle to merge team memory and skills. Imported messages rebuild FTS, graph, and vector indexes through the normal `WorkingMemory.append_message()` path.
+
+Manual check:
+
+`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; from yizutt_agi.skills import SkillStore; mem=WorkingMemory(".yizutt/team-test/source.sqlite3"); mem.append_message("team-s1", "user", "I prefer Rust for team runtime work."); mem.append_message("team-s1", "assistant", "Noted team runtime preference."); mem.close(); SkillStore(".yizutt/team-test/source-skills").save_skill("team-echo", "Share a team echo skill", ["Read phrase", "Return phrase unchanged"], "{}")'`
+
+`PYTHONPATH=python python -m yizutt_agi.team_sync export --bundle .yizutt/team-test/team.zip --memory-path .yizutt/team-test/source.sqlite3 --skills-root .yizutt/team-test/source-skills`
+
+`PYTHONPATH=python python -m yizutt_agi.team_sync import --bundle .yizutt/team-test/team.zip --memory-path .yizutt/team-test/dest.sqlite3 --skills-root .yizutt/team-test/dest-skills`
+
 ## Verified Behavior
 
 GitHub Actions runs the core CI checks on push to `main` and on pull requests: `cargo check --workspace --locked`, `cargo build --workspace --locked`, and `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`.
@@ -248,6 +261,7 @@ The current prototype has been run locally with:
 - MCP stdio tool call denial and allowlisted echo-server execution
 - Skill replay checks, draft rejection, and same-name skill merge behavior
 - Local skill package install and list commands
+- Team bundle export/import for shared memory and skills
 - Active health checks for healthy workers, sidecar import failures, and task-level error replies
 - Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`
 - SQLite graph memory extraction and cross-session graph lookup

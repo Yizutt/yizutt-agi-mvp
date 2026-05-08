@@ -30,6 +30,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **gRPC 流式 Trace API**：`proto/yizutt.proto` 和 Runtime/Worker 已支持 `SubmitStream`/`ExecuteStream`，CLI 可用 `submit --stream` 实时输出事件，普通 `submit` 保持兼容。
 - **MCP stdio 工具接入**：新增 `mcp_client.py` 和受控 `mcp_call` 工具，默认拒绝，只有 `allow_mcp=true` 且显式配置 `mcp_servers` 时才可调用。
 - **技能包安装器**：新增 `skill_market.py`、`yizutt` Python 入口和 `examples/skills/echo-skill` 包格式示例，支持从本地路径或 URL 安装技能。
+- **团队记忆同步**：新增 `team_sync.py`，可导出/导入包含记忆消息和技能包的 zip bundle，在多个 Agent 工作区之间共享团队记忆。
 
 ## 三、关键文件与模块
 
@@ -59,7 +60,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **多 Agent 共享不足**：多个 Agent 实例还不能同步共享记忆和技能变更。
+3. **跨技能自动编排不足**：还不能从已有技能中自动发现可组合的技能链。
 
 ## 六、当前任务队列
 
@@ -301,8 +302,19 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 安装示例技能包：`PYTHONPATH=python python -m yizutt_agi.skill_market skill install examples/skills/echo-skill --skills-root .yizutt/skill-test`
 - 列出已安装技能包：`PYTHONPATH=python python -m yizutt_agi.skill_market skill list --skills-root .yizutt/skill-test`
 
-- **P4-3 当前执行：多 Agent 会话协作**：多个 Agent 实例可同步共享记忆和技能变更，实现“团队记忆”。
-- **P4-4 跨技能组合与自动化工作流**：从多个独立技能中自动发现可串联的“技能链”，生成复合模板。
+- **P4-3 已完成：多 Agent 会话协作**：多个 Agent 实例可同步共享记忆和技能变更，实现“团队记忆”。
+
+**完成情况**：已新增 `python/yizutt_agi/team_sync.py` 和 `yizutt-team` Python 入口。`export` 会把 SQLite 记忆消息和技能包打包为 `yizutt-team-bundle` zip；`import` 会合并消息和技能，导入消息走 `WorkingMemory.append_message()`，因此会重建 FTS、Graph 和 Vector 索引。MVP 采用显式 bundle 导出/导入，不做后台实时同步。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
+- 构造源数据：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; from yizutt_agi.skills import SkillStore; mem=WorkingMemory(".yizutt/team-test/source.sqlite3"); mem.append_message("team-s1", "user", "I prefer Rust for team runtime work."); mem.append_message("team-s1", "assistant", "Noted team runtime preference."); mem.close(); SkillStore(".yizutt/team-test/source-skills").save_skill("team-echo", "Share a team echo skill", ["Read phrase", "Return phrase unchanged"], "{}")'`
+- 导出：`PYTHONPATH=python python -m yizutt_agi.team_sync export --bundle .yizutt/team-test/team.zip --memory-path .yizutt/team-test/source.sqlite3 --skills-root .yizutt/team-test/source-skills`
+- 导入：`PYTHONPATH=python python -m yizutt_agi.team_sync import --bundle .yizutt/team-test/team.zip --memory-path .yizutt/team-test/dest.sqlite3 --skills-root .yizutt/team-test/dest-skills`
+- 验证记忆：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import json; mem=WorkingMemory(".yizutt/team-test/dest.sqlite3"); print(json.dumps({"hits": len(mem.search_text("Rust team runtime", 5)), "graph": mem.graph_context("Rust team", 5)}, ensure_ascii=False)); mem.close()'`
+- 验证技能：`PYTHONPATH=python python -m yizutt_agi.skill_market skill list --skills-root .yizutt/team-test/dest-skills`
+
+- **P4-4 当前执行：跨技能组合与自动化工作流**：从多个独立技能中自动发现可串联的“技能链”，生成复合模板。
 
 ## 七、常用开发命令
 
