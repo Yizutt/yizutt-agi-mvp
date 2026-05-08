@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package nexus;
+
+service RuntimeService {
+  rpc Submit(TaskRequest) returns (TaskReply);
+  rpc PoolStatus(Empty) returns (PoolStatusReply);
+}
+
+service WorkerService {
+  rpc Execute(TaskRequest) returns (TaskReply);
+  rpc Health(Empty) returns (WorkerHealth);
+}
+
+message Empty {}
+
+message TaskRequest {
+  string session_id = 1;
+  string task = 2;
+  string context_json = 3;
+}
+
+message TaskReply {
+  string task_id = 1;
+  string worker_id = 2;
+  string status = 3;
+  string output = 4;
+  string trace_json = 5;
+}
+
+message WorkerHealth {
+  string worker_id = 1;
+  bool healthy = 2;
+  uint32 inflight = 3;
+}
+
+message WorkerSnapshot {
+  string worker_id = 1;
+  string address = 2;
+  uint32 inflight = 3;
+  bool healthy = 4;
+}
+
+message PoolStatusReply {
+  repeated WorkerSnapshot workers = 1;
+  uint32 min_workers = 2;
+  uint32 max_workers = 3;
+}
+
