@@ -16,7 +16,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - SQLite FTS5 working memory with extra tokenized search for Chinese and English queries.
 - Skill persistence as `SKILL.md` files.
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
-- Local Web panel for Runtime status, task submission, recent memory, and skill summaries.
+- Local Web panel for Runtime status, task submission, recent memory, skill summaries, and language switching.
 - Minimal Leader/Orchestrator planning that emits structured `plan_created` trace events for complex tasks.
 
 ## Repository Layout
@@ -62,7 +62,7 @@ Start the local Web panel:
 
 `PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200`
 
-Open `http://127.0.0.1:50280` in a browser. The panel lets you edit the Runtime address, inspect workers, submit a task, and view recent memory and skills. Model API keys stay in the server environment and are not exposed to the browser.
+Open `http://127.0.0.1:50280` in a browser. The panel lets you edit the Runtime address, inspect workers, submit a task, and view recent memory and skills. The default UI language is Simplified Chinese, with Traditional Chinese, English, Japanese, Korean, Arabic, and Russian available from the language selector. Model API keys stay in the server environment and are not exposed to the browser.
 
 Run the Python demo after the runtime is running:
 
@@ -131,7 +131,7 @@ The current prototype has been run locally with:
 - `target/debug/yizutt-runtime run`
 - `target/debug/yizutt-runtime submit`
 - Python sidecar execution through an OpenAI-compatible local proxy
-- Local Web panel status, task submission, memory, and skill APIs
+- Local Web panel status, task submission, memory, skill APIs, and language switching
 - Leader/Orchestrator `plan_created` trace generation for a complex task
 - Tool loop execution with `read_file` returning the first README heading
 - Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`

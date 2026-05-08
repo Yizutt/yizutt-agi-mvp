@@ -17,7 +17,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **技能文件存储**：任务执行完成后可将成功路径保存为 `SKILL.md`。
 - **工具调用循环**：`executor.py` 支持模型返回 `tool_calls`，执行受控工具后继续下一轮模型调用。
 - **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
-- **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务、查看最近记忆和技能摘要。
+- **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务、查看最近记忆和技能摘要，并支持简体中文、繁体中文、英语、日语、韩语、阿拉伯语、俄语切换。
 - **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回。
 
 ## 三、关键文件与模块
@@ -75,7 +75,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 **非目标**：不做账号系统；不做远程云部署；不做复杂权限管理；不做完整任务编排 UI。
 
-**完成情况**：已新增 `python/yizutt_agi/panel.py` 和 `web/panel/index.html`，面板通过本地 HTTP API 代理现有 Runtime CLI，可执行状态查询、任务提交、最近记忆读取和技能摘要读取。
+**完成情况**：已新增 `python/yizutt_agi/panel.py` 和 `web/panel/index.html`，面板通过本地 HTTP API 代理现有 Runtime CLI，可执行状态查询、任务提交、最近记忆读取和技能摘要读取。面板默认中文-简体，并可切换中文-繁体、英语、日语、韩语、阿拉伯语、俄语；阿拉伯语自动使用 RTL 布局。
 
 **手动验证命令**：
 - `cargo build`

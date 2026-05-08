@@ -35,6 +35,7 @@
 
     button,
     input,
+    select,
     textarea {
       font: inherit;
     }
@@ -60,6 +61,7 @@
     }
 
     input,
+    select,
     textarea {
       width: 100%;
       border: 1px solid var(--line);
@@ -67,6 +69,17 @@
       color: var(--text);
       background: #ffffff;
       padding: 10px 12px;
+    }
+
+    select {
+      min-height: 38px;
+    }
+
+    #runtimeAddr,
+    #sessionId,
+    #contextJson {
+      direction: ltr;
+      text-align: left;
     }
 
     textarea {
@@ -89,6 +102,8 @@
       font-size: 13px;
       line-height: 1.45;
       color: #26313f;
+      direction: ltr;
+      text-align: left;
     }
 
     .shell {
@@ -107,7 +122,7 @@
       margin: 0 auto;
       padding: 16px 20px;
       display: grid;
-      grid-template-columns: 1fr minmax(260px, 520px) auto;
+      grid-template-columns: minmax(200px, 1fr) minmax(240px, 420px) minmax(160px, 220px) auto;
       gap: 14px;
       align-items: end;
     }
@@ -274,11 +289,23 @@
       <div class="topbar-inner">
         <div class="brand">
           <h1>Yizutt AGI Panel</h1>
-          <span>本地 Runtime 控制面板</span>
+          <span id="brandSubtitle">本地 Runtime 控制面板</span>
         </div>
-        <label>
+        <label id="runtimeLabel">
           Runtime 地址
           <input id="runtimeAddr" value="http://127.0.0.1:50200" autocomplete="off">
+        </label>
+        <label id="languageLabel">
+          语言
+          <select id="languageSelect">
+            <option value="zh-Hans">中文-简体</option>
+            <option value="zh-Hant">中文-繁体</option>
+            <option value="en">English</option>
+            <option value="ja">日本語</option>
+            <option value="ko">한국어</option>
+            <option value="ar">العربية</option>
+            <option value="ru">Русский</option>
+          </select>
         </label>
         <button id="refreshAll" class="secondary" type="button">刷新</button>
       </div>
@@ -290,19 +317,19 @@
       <section class="grid">
         <div class="panel">
           <div class="panel-head">
-            <h2>提交任务</h2>
+            <h2 id="submitTitle">提交任务</h2>
             <span class="badge" id="submitState">空闲</span>
           </div>
           <div class="panel-body">
-            <label>
+            <label id="sessionLabel">
               Session
               <input id="sessionId" value="panel" autocomplete="off">
             </label>
-            <label>
+            <label id="taskLabel">
               任务描述
               <textarea id="taskInput" placeholder="例如：总结这个项目当前架构，并指出下一步最小改动"></textarea>
             </label>
-            <label>
+            <label id="contextLabel">
               Context JSON
               <input id="contextJson" value="{}" autocomplete="off">
             </label>
@@ -318,7 +345,7 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h2>Runtime 状态</h2>
+            <h2 id="runtimeTitle">Runtime 状态</h2>
             <span class="badge" id="runtimeBadge">未知</span>
           </div>
           <div class="panel-body">
@@ -330,7 +357,7 @@
       <section class="grid">
         <div class="panel">
           <div class="panel-head">
-            <h2>最近记忆</h2>
+            <h2 id="memoryTitle">最近记忆</h2>
             <span class="badge" id="memoryBadge">未加载</span>
           </div>
           <div class="panel-body">
@@ -340,7 +367,7 @@
 
         <div class="panel">
           <div class="panel-head">
-            <h2>技能摘要</h2>
+            <h2 id="skillsTitle">技能摘要</h2>
             <span class="badge" id="skillsBadge">未加载</span>
           </div>
           <div class="panel-body">
@@ -352,28 +379,456 @@
   </div>
 
   <script>
+    const LANGUAGES = {
+      "zh-Hans": {
+        htmlLang: "zh-CN",
+        dir: "ltr",
+        strings: {
+          documentTitle: "Yizutt AGI 面板",
+          brandSubtitle: "本地 Runtime 控制面板",
+          runtimeLabel: "Runtime 地址",
+          languageLabel: "语言",
+          refresh: "刷新",
+          statusLoading: "正在加载面板配置...",
+          submitTitle: "提交任务",
+          idle: "空闲",
+          sessionLabel: "会话",
+          taskLabel: "任务描述",
+          taskPlaceholder: "例如：总结这个项目当前架构，并指出下一步最小改动",
+          contextLabel: "Context JSON",
+          submitButton: "提交",
+          clearButton: "清空输出",
+          taskWaiting: "等待任务提交。",
+          runtimeTitle: "Runtime 状态",
+          unknown: "未知",
+          memoryTitle: "最近记忆",
+          notLoaded: "未加载",
+          skillsTitle: "技能摘要",
+          checking: "检查中",
+          workersCount: "{count} 个 Worker",
+          noWorkerTitle: "无 Worker",
+          noWorkerMeta: "Runtime 已响应，但没有返回 Worker。",
+          healthy: "健康",
+          unhealthy: "异常",
+          workerMeta: "{address} · 执行中 {inflight}",
+          runtimeUnavailable: "Runtime 不可用",
+          unavailable: "不可用",
+          memoryCount: "{count} 条",
+          noMemoryTitle: "暂无记忆",
+          memoryEmpty: "数据库为空。",
+          memoryMissing: "还没有创建工作记忆数据库。",
+          memoryReadFailed: "记忆读取失败",
+          skillsCount: "{count} 个",
+          noSkillsTitle: "暂无技能",
+          skillsEmpty: "技能目录为空。",
+          skillsMissing: "还没有创建技能目录。",
+          skillsReadFailed: "技能读取失败",
+          taskRequired: "请先输入任务描述。",
+          running: "执行中",
+          taskSubmitted: "任务已提交，等待 Runtime 返回。",
+          complete: "完成",
+          failed: "失败",
+          error: "错误",
+          statusConnected: "面板已连接本地代理，记忆库：{path}"
+        }
+      },
+      "zh-Hant": {
+        htmlLang: "zh-Hant",
+        dir: "ltr",
+        strings: {
+          documentTitle: "Yizutt AGI 面板",
+          brandSubtitle: "本地 Runtime 控制面板",
+          runtimeLabel: "Runtime 位址",
+          languageLabel: "語言",
+          refresh: "重新整理",
+          statusLoading: "正在載入面板設定...",
+          submitTitle: "提交任務",
+          idle: "閒置",
+          sessionLabel: "會話",
+          taskLabel: "任務描述",
+          taskPlaceholder: "例如：總結這個專案目前架構，並指出下一步最小改動",
+          contextLabel: "Context JSON",
+          submitButton: "提交",
+          clearButton: "清空輸出",
+          taskWaiting: "等待任務提交。",
+          runtimeTitle: "Runtime 狀態",
+          unknown: "未知",
+          memoryTitle: "最近記憶",
+          notLoaded: "未載入",
+          skillsTitle: "技能摘要",
+          checking: "檢查中",
+          workersCount: "{count} 個 Worker",
+          noWorkerTitle: "無 Worker",
+          noWorkerMeta: "Runtime 已回應，但沒有返回 Worker。",
+          healthy: "健康",
+          unhealthy: "異常",
+          workerMeta: "{address} · 執行中 {inflight}",
+          runtimeUnavailable: "Runtime 不可用",
+          unavailable: "不可用",
+          memoryCount: "{count} 條",
+          noMemoryTitle: "暫無記憶",
+          memoryEmpty: "資料庫為空。",
+          memoryMissing: "尚未建立工作記憶資料庫。",
+          memoryReadFailed: "記憶讀取失敗",
+          skillsCount: "{count} 個",
+          noSkillsTitle: "暫無技能",
+          skillsEmpty: "技能目錄為空。",
+          skillsMissing: "尚未建立技能目錄。",
+          skillsReadFailed: "技能讀取失敗",
+          taskRequired: "請先輸入任務描述。",
+          running: "執行中",
+          taskSubmitted: "任務已提交，等待 Runtime 返回。",
+          complete: "完成",
+          failed: "失敗",
+          error: "錯誤",
+          statusConnected: "面板已連接本地代理，記憶庫：{path}"
+        }
+      },
+      en: {
+        htmlLang: "en",
+        dir: "ltr",
+        strings: {
+          documentTitle: "Yizutt AGI Panel",
+          brandSubtitle: "Local Runtime Control Panel",
+          runtimeLabel: "Runtime address",
+          languageLabel: "Language",
+          refresh: "Refresh",
+          statusLoading: "Loading panel configuration...",
+          submitTitle: "Submit Task",
+          idle: "Idle",
+          sessionLabel: "Session",
+          taskLabel: "Task description",
+          taskPlaceholder: "Example: summarize the current architecture and identify the smallest next change",
+          contextLabel: "Context JSON",
+          submitButton: "Submit",
+          clearButton: "Clear output",
+          taskWaiting: "Waiting for a task.",
+          runtimeTitle: "Runtime Status",
+          unknown: "Unknown",
+          memoryTitle: "Recent Memory",
+          notLoaded: "Not loaded",
+          skillsTitle: "Skill Summary",
+          checking: "Checking",
+          workersCount: "{count} workers",
+          noWorkerTitle: "No workers",
+          noWorkerMeta: "Runtime responded, but returned no workers.",
+          healthy: "healthy",
+          unhealthy: "unhealthy",
+          workerMeta: "{address} · inflight {inflight}",
+          runtimeUnavailable: "Runtime unavailable",
+          unavailable: "Unavailable",
+          memoryCount: "{count} items",
+          noMemoryTitle: "No memory",
+          memoryEmpty: "The database is empty.",
+          memoryMissing: "Working memory database has not been created yet.",
+          memoryReadFailed: "Memory read failed",
+          skillsCount: "{count} skills",
+          noSkillsTitle: "No skills",
+          skillsEmpty: "The skills directory is empty.",
+          skillsMissing: "Skills directory has not been created yet.",
+          skillsReadFailed: "Skill read failed",
+          taskRequired: "Enter a task description first.",
+          running: "Running",
+          taskSubmitted: "Task submitted. Waiting for Runtime.",
+          complete: "Complete",
+          failed: "Failed",
+          error: "Error",
+          statusConnected: "Panel is connected to the local proxy. Memory DB: {path}"
+        }
+      },
+      ja: {
+        htmlLang: "ja",
+        dir: "ltr",
+        strings: {
+          documentTitle: "Yizutt AGI パネル",
+          brandSubtitle: "ローカル Runtime コントロールパネル",
+          runtimeLabel: "Runtime アドレス",
+          languageLabel: "言語",
+          refresh: "更新",
+          statusLoading: "パネル設定を読み込み中...",
+          submitTitle: "タスク送信",
+          idle: "待機中",
+          sessionLabel: "セッション",
+          taskLabel: "タスク説明",
+          taskPlaceholder: "例：現在のアーキテクチャを要約し、次の最小変更を示す",
+          contextLabel: "Context JSON",
+          submitButton: "送信",
+          clearButton: "出力をクリア",
+          taskWaiting: "タスクの送信を待っています。",
+          runtimeTitle: "Runtime 状態",
+          unknown: "不明",
+          memoryTitle: "最近のメモリ",
+          notLoaded: "未読み込み",
+          skillsTitle: "スキル概要",
+          checking: "確認中",
+          workersCount: "{count} Worker",
+          noWorkerTitle: "Worker なし",
+          noWorkerMeta: "Runtime は応答しましたが Worker を返しませんでした。",
+          healthy: "正常",
+          unhealthy: "異常",
+          workerMeta: "{address} · 実行中 {inflight}",
+          runtimeUnavailable: "Runtime を利用できません",
+          unavailable: "利用不可",
+          memoryCount: "{count} 件",
+          noMemoryTitle: "メモリなし",
+          memoryEmpty: "データベースは空です。",
+          memoryMissing: "作業メモリデータベースはまだ作成されていません。",
+          memoryReadFailed: "メモリの読み取りに失敗しました",
+          skillsCount: "{count} 件",
+          noSkillsTitle: "スキルなし",
+          skillsEmpty: "スキルディレクトリは空です。",
+          skillsMissing: "スキルディレクトリはまだ作成されていません。",
+          skillsReadFailed: "スキルの読み取りに失敗しました",
+          taskRequired: "先にタスク説明を入力してください。",
+          running: "実行中",
+          taskSubmitted: "タスクを送信しました。Runtime の応答を待っています。",
+          complete: "完了",
+          failed: "失敗",
+          error: "エラー",
+          statusConnected: "パネルはローカルプロキシに接続しました。メモリDB：{path}"
+        }
+      },
+      ko: {
+        htmlLang: "ko",
+        dir: "ltr",
+        strings: {
+          documentTitle: "Yizutt AGI 패널",
+          brandSubtitle: "로컬 Runtime 제어 패널",
+          runtimeLabel: "Runtime 주소",
+          languageLabel: "언어",
+          refresh: "새로고침",
+          statusLoading: "패널 설정을 불러오는 중...",
+          submitTitle: "작업 제출",
+          idle: "대기",
+          sessionLabel: "세션",
+          taskLabel: "작업 설명",
+          taskPlaceholder: "예: 현재 아키텍처를 요약하고 다음 최소 변경을 제안",
+          contextLabel: "Context JSON",
+          submitButton: "제출",
+          clearButton: "출력 지우기",
+          taskWaiting: "작업 제출을 기다리는 중입니다.",
+          runtimeTitle: "Runtime 상태",
+          unknown: "알 수 없음",
+          memoryTitle: "최근 메모리",
+          notLoaded: "로드 안 됨",
+          skillsTitle: "스킬 요약",
+          checking: "확인 중",
+          workersCount: "Worker {count}개",
+          noWorkerTitle: "Worker 없음",
+          noWorkerMeta: "Runtime은 응답했지만 Worker를 반환하지 않았습니다.",
+          healthy: "정상",
+          unhealthy: "비정상",
+          workerMeta: "{address} · 실행 중 {inflight}",
+          runtimeUnavailable: "Runtime 사용 불가",
+          unavailable: "사용 불가",
+          memoryCount: "{count}개",
+          noMemoryTitle: "메모리 없음",
+          memoryEmpty: "데이터베이스가 비어 있습니다.",
+          memoryMissing: "작업 메모리 데이터베이스가 아직 생성되지 않았습니다.",
+          memoryReadFailed: "메모리 읽기 실패",
+          skillsCount: "{count}개",
+          noSkillsTitle: "스킬 없음",
+          skillsEmpty: "스킬 디렉터리가 비어 있습니다.",
+          skillsMissing: "스킬 디렉터리가 아직 생성되지 않았습니다.",
+          skillsReadFailed: "스킬 읽기 실패",
+          taskRequired: "먼저 작업 설명을 입력하세요.",
+          running: "실행 중",
+          taskSubmitted: "작업을 제출했습니다. Runtime 응답을 기다립니다.",
+          complete: "완료",
+          failed: "실패",
+          error: "오류",
+          statusConnected: "패널이 로컬 프록시에 연결되었습니다. 메모리 DB: {path}"
+        }
+      },
+      ar: {
+        htmlLang: "ar",
+        dir: "rtl",
+        strings: {
+          documentTitle: "لوحة Yizutt AGI",
+          brandSubtitle: "لوحة تحكم Runtime المحلية",
+          runtimeLabel: "عنوان Runtime",
+          languageLabel: "اللغة",
+          refresh: "تحديث",
+          statusLoading: "جار تحميل إعدادات اللوحة...",
+          submitTitle: "إرسال مهمة",
+          idle: "خامل",
+          sessionLabel: "الجلسة",
+          taskLabel: "وصف المهمة",
+          taskPlaceholder: "مثال: لخّص البنية الحالية وحدد أصغر تغيير تالٍ",
+          contextLabel: "Context JSON",
+          submitButton: "إرسال",
+          clearButton: "مسح المخرجات",
+          taskWaiting: "بانتظار إرسال مهمة.",
+          runtimeTitle: "حالة Runtime",
+          unknown: "غير معروف",
+          memoryTitle: "الذاكرة الحديثة",
+          notLoaded: "لم يتم التحميل",
+          skillsTitle: "ملخص المهارات",
+          checking: "جار الفحص",
+          workersCount: "{count} عامل",
+          noWorkerTitle: "لا يوجد عمال",
+          noWorkerMeta: "استجاب Runtime لكنه لم يرجع أي عامل.",
+          healthy: "سليم",
+          unhealthy: "غير سليم",
+          workerMeta: "{address} · قيد التنفيذ {inflight}",
+          runtimeUnavailable: "Runtime غير متاح",
+          unavailable: "غير متاح",
+          memoryCount: "{count} عنصر",
+          noMemoryTitle: "لا توجد ذاكرة",
+          memoryEmpty: "قاعدة البيانات فارغة.",
+          memoryMissing: "لم يتم إنشاء قاعدة بيانات الذاكرة العاملة بعد.",
+          memoryReadFailed: "فشل قراءة الذاكرة",
+          skillsCount: "{count} مهارة",
+          noSkillsTitle: "لا توجد مهارات",
+          skillsEmpty: "مجلد المهارات فارغ.",
+          skillsMissing: "لم يتم إنشاء مجلد المهارات بعد.",
+          skillsReadFailed: "فشل قراءة المهارات",
+          taskRequired: "أدخل وصف المهمة أولاً.",
+          running: "قيد التنفيذ",
+          taskSubmitted: "تم إرسال المهمة. بانتظار Runtime.",
+          complete: "اكتمل",
+          failed: "فشل",
+          error: "خطأ",
+          statusConnected: "اللوحة متصلة بالوكيل المحلي. قاعدة الذاكرة: {path}"
+        }
+      },
+      ru: {
+        htmlLang: "ru",
+        dir: "ltr",
+        strings: {
+          documentTitle: "Панель Yizutt AGI",
+          brandSubtitle: "Локальная панель управления Runtime",
+          runtimeLabel: "Адрес Runtime",
+          languageLabel: "Язык",
+          refresh: "Обновить",
+          statusLoading: "Загрузка конфигурации панели...",
+          submitTitle: "Отправить задачу",
+          idle: "Ожидание",
+          sessionLabel: "Сессия",
+          taskLabel: "Описание задачи",
+          taskPlaceholder: "Например: опиши текущую архитектуру и минимальное следующее изменение",
+          contextLabel: "Context JSON",
+          submitButton: "Отправить",
+          clearButton: "Очистить вывод",
+          taskWaiting: "Ожидание задачи.",
+          runtimeTitle: "Состояние Runtime",
+          unknown: "Неизвестно",
+          memoryTitle: "Последняя память",
+          notLoaded: "Не загружено",
+          skillsTitle: "Сводка навыков",
+          checking: "Проверка",
+          workersCount: "Worker: {count}",
+          noWorkerTitle: "Нет Worker",
+          noWorkerMeta: "Runtime ответил, но не вернул Worker.",
+          healthy: "исправен",
+          unhealthy: "неисправен",
+          workerMeta: "{address} · выполняется {inflight}",
+          runtimeUnavailable: "Runtime недоступен",
+          unavailable: "Недоступно",
+          memoryCount: "{count} записей",
+          noMemoryTitle: "Нет памяти",
+          memoryEmpty: "База данных пуста.",
+          memoryMissing: "База рабочей памяти еще не создана.",
+          memoryReadFailed: "Не удалось прочитать память",
+          skillsCount: "{count} навыков",
+          noSkillsTitle: "Нет навыков",
+          skillsEmpty: "Каталог навыков пуст.",
+          skillsMissing: "Каталог навыков еще не создан.",
+          skillsReadFailed: "Не удалось прочитать навыки",
+          taskRequired: "Сначала введите описание задачи.",
+          running: "Выполняется",
+          taskSubmitted: "Задача отправлена. Ожидание Runtime.",
+          complete: "Готово",
+          failed: "Ошибка",
+          error: "Ошибка",
+          statusConnected: "Панель подключена к локальному прокси. База памяти: {path}"
+        }
+      }
+    };
+
     const els = {
+      brandSubtitle: document.querySelector("#brandSubtitle"),
+      runtimeLabel: document.querySelector("#runtimeLabel"),
       runtimeAddr: document.querySelector("#runtimeAddr"),
+      languageLabel: document.querySelector("#languageLabel"),
+      languageSelect: document.querySelector("#languageSelect"),
       refreshAll: document.querySelector("#refreshAll"),
       statusLine: document.querySelector("#statusLine"),
+      submitTitle: document.querySelector("#submitTitle"),
       submitState: document.querySelector("#submitState"),
+      sessionLabel: document.querySelector("#sessionLabel"),
       sessionId: document.querySelector("#sessionId"),
+      taskLabel: document.querySelector("#taskLabel"),
       taskInput: document.querySelector("#taskInput"),
+      contextLabel: document.querySelector("#contextLabel"),
       contextJson: document.querySelector("#contextJson"),
       submitTask: document.querySelector("#submitTask"),
       clearOutput: document.querySelector("#clearOutput"),
       taskOutput: document.querySelector("#taskOutput"),
+      runtimeTitle: document.querySelector("#runtimeTitle"),
       runtimeBadge: document.querySelector("#runtimeBadge"),
       workers: document.querySelector("#workers"),
+      memoryTitle: document.querySelector("#memoryTitle"),
       memoryBadge: document.querySelector("#memoryBadge"),
       memoryList: document.querySelector("#memoryList"),
+      skillsTitle: document.querySelector("#skillsTitle"),
       skillsBadge: document.querySelector("#skillsBadge"),
       skillsList: document.querySelector("#skillsList")
     };
 
     const savedRuntime = localStorage.getItem("yizutt.runtimeAddr");
+    const savedLanguage = localStorage.getItem("yizutt.language");
+    let currentLanguage = LANGUAGES[savedLanguage] ? savedLanguage : "zh-Hans";
+
     if (savedRuntime) {
       els.runtimeAddr.value = savedRuntime;
+    }
+
+    function t(key, vars = {}) {
+      const strings = LANGUAGES[currentLanguage].strings;
+      const fallback = LANGUAGES["zh-Hans"].strings;
+      const template = strings[key] || fallback[key] || key;
+      return template.replace(/\{(\w+)\}/g, (_, name) => String(vars[name] ?? ""));
+    }
+
+    function setLabelText(label, text) {
+      if (label && label.firstChild && label.firstChild.nodeType === Node.TEXT_NODE) {
+        label.firstChild.nodeValue = `${text}\n          `;
+      }
+    }
+
+    function applyLanguage() {
+      const config = LANGUAGES[currentLanguage];
+      document.documentElement.lang = config.htmlLang;
+      document.documentElement.dir = config.dir;
+      document.title = t("documentTitle");
+      els.languageSelect.value = currentLanguage;
+      els.brandSubtitle.textContent = t("brandSubtitle");
+      setLabelText(els.runtimeLabel, t("runtimeLabel"));
+      setLabelText(els.languageLabel, t("languageLabel"));
+      els.refreshAll.textContent = t("refresh");
+      els.submitTitle.textContent = t("submitTitle");
+      setBadge(els.submitState, t("idle"));
+      setLabelText(els.sessionLabel, t("sessionLabel"));
+      setLabelText(els.taskLabel, t("taskLabel"));
+      els.taskInput.placeholder = t("taskPlaceholder");
+      setLabelText(els.contextLabel, t("contextLabel"));
+      els.submitTask.textContent = t("submitButton");
+      els.clearOutput.textContent = t("clearButton");
+      if (!els.taskOutput.dataset.hasResult) {
+        els.taskOutput.textContent = t("taskWaiting");
+      }
+      els.runtimeTitle.textContent = t("runtimeTitle");
+      setBadge(els.runtimeBadge, t("unknown"));
+      els.memoryTitle.textContent = t("memoryTitle");
+      setBadge(els.memoryBadge, t("notLoaded"));
+      els.skillsTitle.textContent = t("skillsTitle");
+      setBadge(els.skillsBadge, t("notLoaded"));
+      if (els.statusLine.dataset.loaded) {
+        els.statusLine.textContent = t("statusConnected", {path: els.statusLine.dataset.memoryPath || ""});
+      } else {
+        els.statusLine.textContent = t("statusLoading");
+      }
     }
 
     function runtimeAddr() {
@@ -422,33 +877,49 @@
         .replaceAll("'", "&#039;");
     }
 
+    function formatTime(epochSeconds) {
+      if (!epochSeconds) {
+        return "";
+      }
+      try {
+        return new Intl.DateTimeFormat(LANGUAGES[currentLanguage].htmlLang, {
+          dateStyle: "short",
+          timeStyle: "medium"
+        }).format(new Date(epochSeconds * 1000));
+      } catch (_) {
+        return new Date(epochSeconds * 1000).toLocaleString();
+      }
+    }
+
     async function loadConfig() {
       const data = await api("/api/config");
       if (!savedRuntime && data.runtime_addr) {
         els.runtimeAddr.value = data.runtime_addr;
       }
-      els.statusLine.textContent = `面板已连接本地代理，记忆库：${data.memory_path}`;
+      els.statusLine.dataset.loaded = "true";
+      els.statusLine.dataset.memoryPath = data.memory_path;
+      els.statusLine.textContent = t("statusConnected", {path: data.memory_path});
     }
 
     async function refreshStatus() {
-      setBadge(els.runtimeBadge, "检查中");
+      setBadge(els.runtimeBadge, t("checking"));
       els.workers.innerHTML = "";
       try {
         const data = await api(`/api/status?runtime_addr=${encodeURIComponent(runtimeAddr())}`);
         const workers = data.workers || [];
-        setBadge(els.runtimeBadge, `${workers.length} workers`, "ok");
+        setBadge(els.runtimeBadge, t("workersCount", {count: workers.length}), "ok");
         if (!workers.length) {
-          els.workers.append(item("无 Worker", "Runtime 已响应，但没有返回 Worker。"));
+          els.workers.append(item(t("noWorkerTitle"), t("noWorkerMeta")));
           return;
         }
         for (const worker of workers) {
-          const healthy = worker.healthy ? "healthy" : "unhealthy";
-          const meta = `${worker.address} · inflight ${worker.inflight}`;
-          els.workers.append(item(`${worker.worker_id} · ${healthy}`, meta));
+          const health = worker.healthy ? t("healthy") : t("unhealthy");
+          const meta = t("workerMeta", {address: worker.address, inflight: worker.inflight});
+          els.workers.append(item(`${worker.worker_id} · ${health}`, meta));
         }
       } catch (err) {
-        setBadge(els.runtimeBadge, "不可用", "error");
-        els.workers.append(item("Runtime 不可用", err.message));
+        setBadge(els.runtimeBadge, t("unavailable"), "error");
+        els.workers.append(item(t("runtimeUnavailable"), err.message));
       }
     }
 
@@ -457,18 +928,18 @@
       try {
         const data = await api("/api/memory?limit=12");
         const items = data.items || [];
-        setBadge(els.memoryBadge, `${items.length} 条`, data.exists ? "ok" : "warn");
+        setBadge(els.memoryBadge, t("memoryCount", {count: items.length}), data.exists ? "ok" : "warn");
         if (!items.length) {
-          els.memoryList.append(item("暂无记忆", data.exists ? "数据库为空。" : "还没有创建工作记忆数据库。"));
+          els.memoryList.append(item(t("noMemoryTitle"), data.exists ? t("memoryEmpty") : t("memoryMissing")));
           return;
         }
         for (const msg of items) {
-          const created = msg.created_at ? new Date(msg.created_at * 1000).toLocaleString() : "";
+          const created = formatTime(msg.created_at);
           els.memoryList.append(item(`${msg.role} · ${msg.session_id}`, created, msg.content));
         }
       } catch (err) {
-        setBadge(els.memoryBadge, "错误", "error");
-        els.memoryList.append(item("记忆读取失败", err.message));
+        setBadge(els.memoryBadge, t("error"), "error");
+        els.memoryList.append(item(t("memoryReadFailed"), err.message));
       }
     }
 
@@ -477,19 +948,19 @@
       try {
         const data = await api("/api/skills?limit=12");
         const items = data.items || [];
-        setBadge(els.skillsBadge, `${items.length} 个`, data.exists ? "ok" : "warn");
+        setBadge(els.skillsBadge, t("skillsCount", {count: items.length}), data.exists ? "ok" : "warn");
         if (!items.length) {
-          els.skillsList.append(item("暂无技能", data.exists ? "技能目录为空。" : "还没有创建技能目录。"));
+          els.skillsList.append(item(t("noSkillsTitle"), data.exists ? t("skillsEmpty") : t("skillsMissing")));
           return;
         }
         for (const skill of items) {
-          const updated = skill.updated_at ? new Date(skill.updated_at * 1000).toLocaleString() : "";
+          const updated = formatTime(skill.updated_at);
           const meta = `${updated} · ${skill.path}`;
           els.skillsList.append(item(skill.name, meta, skill.description || skill.preview));
         }
       } catch (err) {
-        setBadge(els.skillsBadge, "错误", "error");
-        els.skillsList.append(item("技能读取失败", err.message));
+        setBadge(els.skillsBadge, t("error"), "error");
+        els.skillsList.append(item(t("skillsReadFailed"), err.message));
       }
     }
 
@@ -500,12 +971,14 @@
     async function submitTask() {
       const task = els.taskInput.value.trim();
       if (!task) {
-        els.taskOutput.textContent = "请先输入任务描述。";
+        els.taskOutput.dataset.hasResult = "";
+        els.taskOutput.textContent = t("taskRequired");
         return;
       }
-      setBadge(els.submitState, "执行中", "warn");
+      setBadge(els.submitState, t("running"), "warn");
       els.submitTask.disabled = true;
-      els.taskOutput.textContent = "任务已提交，等待 Runtime 返回。";
+      els.taskOutput.dataset.hasResult = "true";
+      els.taskOutput.textContent = t("taskSubmitted");
       try {
         const data = await api("/api/submit", {
           method: "POST",
@@ -516,11 +989,11 @@
             context_json: els.contextJson.value.trim() || "{}"
           })
         });
-        setBadge(els.submitState, "完成", "ok");
+        setBadge(els.submitState, t("complete"), "ok");
         els.taskOutput.textContent = JSON.stringify(data.reply, null, 2);
         await Promise.allSettled([refreshStatus(), refreshMemory(), refreshSkills()]);
       } catch (err) {
-        setBadge(els.submitState, "失败", "error");
+        setBadge(els.submitState, t("failed"), "error");
         els.taskOutput.textContent = err.message;
       } finally {
         els.submitTask.disabled = false;
@@ -530,13 +1003,22 @@
     els.refreshAll.addEventListener("click", refreshAll);
     els.submitTask.addEventListener("click", submitTask);
     els.clearOutput.addEventListener("click", () => {
-      els.taskOutput.textContent = "等待任务提交。";
-      setBadge(els.submitState, "空闲");
+      els.taskOutput.dataset.hasResult = "";
+      els.taskOutput.textContent = t("taskWaiting");
+      setBadge(els.submitState, t("idle"));
     });
     els.runtimeAddr.addEventListener("change", refreshStatus);
+    els.languageSelect.addEventListener("change", async () => {
+      currentLanguage = els.languageSelect.value;
+      localStorage.setItem("yizutt.language", currentLanguage);
+      applyLanguage();
+      await refreshAll();
+    });
 
+    applyLanguage();
     loadConfig()
       .catch((err) => {
+        els.statusLine.dataset.loaded = "";
         els.statusLine.textContent = err.message;
         els.statusLine.className = "status-line error";
       })
