@@ -69,6 +69,8 @@ class WorkingMemory:
         self._backfill_tokens()
         self._init_token_triggers()
         self._init_graph_schema()
+        self._init_vector_schema()
+        self._backfill_vectors()
         self.db.commit()
 
     def _ensure_tokens_column(self) -> None:
@@ -143,6 +145,37 @@ class WorkingMemory:
             """
         )
 
+    def _init_vector_schema(self) -> None:
+        self.db.executescript(
+            """
+            create table if not exists memory_vectors(
+              message_id text primary key,
+              vector_json text not null,
+              created_at integer not null,
+              foreign key(message_id) references messages(id)
+            );
+            create index if not exists memory_vectors_created_idx on memory_vectors(created_at);
+            """
+        )
+
+    def _backfill_vectors(self) -> None:
+        rows = self.db.execute(
+            """
+            select m.id, m.content, m.created_at
+            from messages m
+            left join memory_vectors v on v.message_id = m.id
+            where v.message_id is null
+            """
+        ).fetchall()
+        if rows:
+            self.db.executemany(
+                "insert or replace into memory_vectors(message_id, vector_json, created_at) values (?, ?, ?)",
+                [
+                    (row["id"], json.dumps(text_to_sparse_vector(row["content"]), ensure_ascii=False), row["created_at"])
+                    for row in rows
+                ],
+            )
+
     def start_session(self, title: str = "") -> str:
         session_id = str(uuid.uuid4())
         now = int(time.time())
@@ -163,6 +196,10 @@ class WorkingMemory:
         self.db.execute(
             "insert into messages(id, session_id, role, content, tokens, meta_json, created_at) values (?, ?, ?, ?, ?, ?, ?)",
             (message_id, session_id, role, content, tokenize_text(content), json.dumps(meta or {}, ensure_ascii=False), now),
+        )
+        self.db.execute(
+            "insert or replace into memory_vectors(message_id, vector_json, created_at) values (?, ?, ?)",
+            (message_id, json.dumps(text_to_sparse_vector(content), ensure_ascii=False), now),
         )
         self.db.execute("update sessions set updated_at = ? where id = ?", (now, session_id))
         self._extract_graph_facts(session_id, role, content, message_id)
@@ -332,6 +369,36 @@ class WorkingMemory:
             f"{item['source']} -[{item['relation']}]-> {item['target']} (session: {item['session_id'] or 'global'})"
             for item in facts
         )
+
+    def search_vector(self, query: str, limit: int = 10) -> list[dict]:
+        query_vector = text_to_sparse_vector(query)
+        if not query_vector:
+            return []
+        rows = self.db.execute(
+            """
+            select m.id, m.session_id, m.role, m.content, m.meta_json, m.created_at, v.vector_json
+            from memory_vectors v
+            join messages m on m.id = v.message_id
+            order by v.created_at desc
+            limit 1000
+            """
+        ).fetchall()
+        scored = []
+        for row in rows:
+            vector = json.loads(row["vector_json"] or "{}")
+            score = cosine_similarity(query_vector, vector)
+            if score <= 0:
+                continue
+            item = self._row_to_dict(row)
+            item.pop("vector_json", None)
+            item["score"] = score
+            scored.append((score, item["created_at"], item))
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [item for _, _, item in scored[:limit]]
+
+    def vector_context(self, query: str, limit: int = 5) -> str:
+        messages = self.search_vector(query, limit)
+        return compact_context(messages)
 
     def close(self) -> None:
         self.db.close()
@@ -512,3 +579,25 @@ def merge_aliases(existing: list[str], incoming: list[str]) -> list[str]:
             seen.add(key)
             result.append(clean)
     return result[:20]
+
+
+def text_to_sparse_vector(text: str, max_terms: int = 256) -> dict[str, float]:
+    tokens = tokenize_text(text).split()
+    if not tokens:
+        return {}
+    counts: dict[str, float] = {}
+    for token in tokens:
+        counts[token] = counts.get(token, 0.0) + 1.0
+    top_items = sorted(counts.items(), key=lambda item: item[1], reverse=True)[:max_terms]
+    norm = sum(weight * weight for _, weight in top_items) ** 0.5
+    if norm == 0:
+        return {}
+    return {term: weight / norm for term, weight in top_items}
+
+
+def cosine_similarity(left: dict[str, float], right: dict[str, float]) -> float:
+    if not left or not right:
+        return 0.0
+    if len(left) > len(right):
+        left, right = right, left
+    return sum(weight * float(right.get(term, 0.0)) for term, weight in left.items())

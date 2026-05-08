@@ -25,6 +25,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **基础 CI**：GitHub Actions 会在 push 到 `main` 和 pull request 时运行 Rust 与 Python 基础检查。
 - **端到端本地 Mock Demo**：`examples/local_mock_model.py` 可提供无 API key 的确定性模型端点，README 已给出 Runtime、工具调用、记忆查询和技能生成的完整流程。
 - **SQLite Graph Memory**：`memory.py` 在 FTS5 之外增加实体/关系表，自动抽取简单用户偏好和项目技术事实，支持跨会话图谱查询并向 executor/real_loop 注入图谱上下文。
+- **稀疏向量记忆**：`memory.py` 为每条消息持久化 `memory_vectors` 稀疏 token 向量，支持 cosine 相似检索，并向 executor/real_loop 注入 vector context。
 
 ## 三、关键文件与模块
 
@@ -54,7 +55,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划，但还没有持久队列、并行子任务调度和实时流式 trace。
 2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **语义向量记忆缺失**：目前已有 FTS5 和 SQLite 图记忆，但还没有向量相似检索来弥补关键词召回不足。
+3. **训练数据质量层缺失**：执行轨迹还没有进入可评分、可筛选的训练缓冲区。
 
 ## 六、当前任务队列
 
@@ -249,8 +250,15 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py`
 - 图谱写入与查询：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import tempfile, json; td=tempfile.TemporaryDirectory(); mem=WorkingMemory(td.name+"/work.sqlite3"); mem.append_message("s1", "user", "I prefer Rust for runtime design."); mem.append_message("s2", "user", "Project Nexus uses SQLite for memory."); print(json.dumps({"rust": mem.search_graph("Rust runtime", 5), "sqlite": mem.graph_context("Nexus SQLite", 5)}, ensure_ascii=False)); mem.close(); td.cleanup()'`
 
-- **P3-3 当前执行：向量记忆层**：引入本地向量引擎（FAISS 或 usearch），支持语义相似检索，弥补纯关键词匹配的不足。
-- **P3-4 训练数据收集与质量评分**：自动筛选高质量执行轨迹存入训练缓冲区，为未来 LoRA 微调做准备（不自动训练，仅收集）。
+- **P3-3 已完成：向量记忆层**：引入本地向量引擎（FAISS 或 usearch），支持语义相似检索，弥补纯关键词匹配的不足。
+
+**完成情况**：已在 `python/yizutt_agi/memory.py` 中增加 `memory_vectors` SQLite 表，消息写入时生成无依赖的稀疏 token 向量并持久化；新增 `search_vector()` 和 `vector_context()`，用 cosine 相似度召回相关记忆。`executor.py` 和 `real_loop.py` 会在 FTS5 与 Graph Memory 之后追加命中的 Vector Memory 上下文。当前实现是便携 MVP 后端，后续可替换为 FAISS/usearch 或 embedding 模型向量。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py`
+- 向量检索：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import tempfile, json; td=tempfile.TemporaryDirectory(); mem=WorkingMemory(td.name+"/work.sqlite3"); mem.append_message("s1", "user", "Rust runtime workers schedule tasks locally"); mem.append_message("s2", "user", "Python skills store reusable execution steps"); hits=mem.search_vector("local task scheduler in Rust", limit=2); print(json.dumps({"top_session": hits[0]["session_id"], "top_score": round(hits[0]["score"], 3), "context": mem.vector_context("reusable Python skill", 2)}, ensure_ascii=False)); mem.close(); td.cleanup()'`
+
+- **P3-4 当前执行：训练数据收集与质量评分**：自动筛选高质量执行轨迹存入训练缓冲区，为未来 LoRA 微调做准备（不自动训练，仅收集）。
 - **P3-5 gRPC 流式 Trace API**：将当前一元返回改为 server-streaming，让调用方可实时观察 Agent 思考、工具调用和最终输出。
 
 ### P4 待执行（生态与协作）
