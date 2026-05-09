@@ -62,7 +62,21 @@ Rust 构建使用 vendored `protoc`，不需要系统预装 `protoc`。
 
 ## 快速运行
 
-启动 Runtime：
+一条命令启动完整无 API key 本地 demo：
+
+`./scripts/start_local_demo.sh`
+
+然后在浏览器打开 `http://127.0.0.1:50280`。脚本会启动确定性 mock 模型、Rust Runtime 和 Web 面板，日志写入 `.yizutt/local-demo/logs`，按 Ctrl-C 会同时停止这三个进程。
+
+常用覆盖参数：
+
+`RECOVERY_MODE=resume ./scripts/start_local_demo.sh`
+
+`PANEL_PORT=50880 RUNTIME_PORT=50800 MOCK_PORT=50890 ./scripts/start_local_demo.sh`
+
+`BUILD=0 ./scripts/start_local_demo.sh`
+
+只手动启动 Runtime：
 
 `RUST_LOG=info cargo run -p yizutt-runtime -- run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 4 --health-timeout-secs 3`
 
@@ -102,15 +116,11 @@ Runtime 启动后运行 Python demo：
 
 这条流程不需要真实 API key。它会启动一个确定性的本地模型端点，运行 Rust Runtime，提交一个会触发 `read_file` 工具的任务，然后验证 `.yizutt/` 下的工作记忆和技能文件。
 
-终端 1，启动 mock 模型：
+启动本地 demo：
 
-`PYTHONPATH=python python examples/local_mock_model.py --port 50990`
+`./scripts/start_local_demo.sh`
 
-终端 2，启动 Runtime，并让 Worker 使用 mock 模型：
-
-`PYTHONPATH=python YIZUTT_LOCAL_MODEL_URL=http://127.0.0.1:50990 target/debug/yizutt-runtime run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 2`
-
-终端 3，提交一个使用工具的任务：
+另开一个终端，提交一个使用工具的任务：
 
 `target/debug/yizutt-runtime submit --addr http://127.0.0.1:50200 --session e2e-local --task "Use the read_file tool to read README.md, then summarize the project in one sentence." --context-json '{"provider":"local","max_tool_steps":2,"skill_name":"e2e-local-mock"}'`
 

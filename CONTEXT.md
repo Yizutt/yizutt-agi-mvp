@@ -20,6 +20,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **工具安全审计与基础沙箱**：工具执行默认拒绝写文件、命令执行、内部路径访问和命令网络访问，支持 `allowed_paths`、`allowed_commands`、`allowed_network_hosts` 显式授权；命令工具使用精简环境、超时上限、输出上限和进程组取消，并在 trace 中记录脱敏参数摘要、允许状态和拒绝原因。
 - **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
 - **本地 Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态和 Runtime 队列、提交任务并实时显示 trace、回放持久任务历史、查看最近记忆和技能摘要，并支持全局语言短码切换，默认 `cnzh` 中文-简体，可切换繁体中文、英语、日语、韩语、阿拉伯语、俄语。
+- **一键本地启动脚本**：`./scripts/start_local_demo.sh` 可自动构建并启动 mock 模型、Rust Runtime 和 Web 面板，默认访问 `http://127.0.0.1:50280`，Ctrl-C 会清理所有子进程。
 - **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回；`execute_plan_parallel=true` 时 Runtime 会持久化计划，并按 `depends_on`、最大并发、队列深度和重试策略派发子任务。
 - **主动健康检查**：Runtime `status` 会主动探测 Worker RPC 和 Python sidecar 导入状态，任务级错误返回 `status: "error"`，不再误杀 Worker。
 - **开源许可证**：仓库根目录已添加 MIT `LICENSE`，README 和中文说明已同步许可证信息。
@@ -48,6 +49,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 | 语言解析 | `python/yizutt_agi/i18n.py` | 统一解析 `cnzh` 等语言短码、环境变量和 CLI 入口后缀 |
 | 本地面板服务 | `python/yizutt_agi/panel.py` | 提供 HTTP 面板 API，代理 Runtime CLI，保存任务历史，读取 Runtime 队列、记忆和技能摘要，并用 SSE 桥接流式任务输出 |
 | 本地面板页面 | `web/panel/index.html` | 浏览器 UI，用于查看状态、Runtime 队列、提交任务、实时 trace、回放任务历史、查看记忆和技能 |
+| 本地启动脚本 | `scripts/start_local_demo.sh` | 一条命令启动 mock 模型、Runtime 和 Web 面板，并在退出时清理子进程 |
 | 离线闭环测试 | `python/yizutt_agi/real_loop.py` | 不依赖 Runtime 的端到端验证脚本 |
 
 ## 四、架构决策
@@ -508,6 +510,23 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - Python 行为断言：工具策略、命令超时取消、网络默认拒绝、图/向量记忆、技能排序
 - 本地 mock 集成：Runtime status、一元 submit、流式 submit、持久 `tasks` 查询、Web 面板 config/history/runtime-task API、启动 `--expire-incomplete-tasks` 和 `--resume-incomplete-tasks`
 
+### N2-3.2 已完成：简化本地启动命令
+
+**目标**：把本地 mock 模型、Runtime 和 Web 面板的多终端启动流程收敛成一个默认命令，降低首次运行成本。
+
+**涉及文件**：
+- `scripts/start_local_demo.sh`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**完成情况**：新增 `./scripts/start_local_demo.sh`。脚本默认执行增量构建，启动 `examples/local_mock_model.py`、`target/debug/yizutt-runtime run` 和 `python -m yizutt_agi.panel`，等待 mock、Runtime 和面板就绪，日志写入 `.yizutt/local-demo/logs`，并在 Ctrl-C/退出时清理子进程。端口、worker 数、runtime home、日志目录和恢复策略可通过环境变量覆盖，例如 `RECOVERY_MODE=resume ./scripts/start_local_demo.sh` 或 `PANEL_PORT=50880 RUNTIME_PORT=50800 MOCK_PORT=50890 ./scripts/start_local_demo.sh`；如需跳过构建可设置 `BUILD=0`。
+
+**手动验证命令**：
+- 语法检查：`bash -n scripts/start_local_demo.sh`
+- 启动检查：`BUILD=0 MOCK_PORT=51990 RUNTIME_PORT=51900 WORKER_BASE_PORT=51910 PANEL_PORT=51980 LOG_DIR=.yizutt/script-smoke/logs RUNTIME_HOME=.yizutt/script-smoke/runtime PANEL_HISTORY=.yizutt/script-smoke/panel/history.sqlite3 ./scripts/start_local_demo.sh`
+- 启动后浏览器打开 `http://127.0.0.1:50280`
+
 ### N2-4 建议任务：容器或 OS sandbox Worker 隔离
 
 **目标**：在现有工具级策略和 Worker 子进程隔离基础上，增加可选的系统级隔离边界，降低命令工具和 sidecar 执行的生产风险。
@@ -527,13 +546,16 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 ### 当前任务状态
 
-截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步均已完成。下一个建议任务是 N2-4：容器或 OS sandbox Worker 隔离。
+截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步、N2-3.2 简化本地启动命令均已完成。下一个建议任务是 N2-4：容器或 OS sandbox Worker 隔离。
 
 ## 七、常用开发命令
 
 ```bash
 # 构建 Rust
 cargo build
+
+# 一条命令启动本地 mock 模型、Runtime 和 Web 面板
+./scripts/start_local_demo.sh
 
 # 启动 Runtime（自定义端口）
 cargo run -p yizutt-runtime -- run --bind 127.0.0.1:50200 --health-timeout-secs 3

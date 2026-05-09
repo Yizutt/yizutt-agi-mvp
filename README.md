@@ -60,7 +60,21 @@ The Rust build uses a vendored `protoc`, so a system `protoc` binary is not requ
 
 ## Quick Start
 
-Start the runtime:
+Start the full no-key local demo with one command:
+
+`./scripts/start_local_demo.sh`
+
+Open `http://127.0.0.1:50280` in a browser. The script starts the deterministic mock model, Rust Runtime, and Web panel, writes logs to `.yizutt/local-demo/logs`, and stops all three processes when you press Ctrl-C.
+
+Useful overrides:
+
+`RECOVERY_MODE=resume ./scripts/start_local_demo.sh`
+
+`PANEL_PORT=50880 RUNTIME_PORT=50800 MOCK_PORT=50890 ./scripts/start_local_demo.sh`
+
+`BUILD=0 ./scripts/start_local_demo.sh`
+
+Manual runtime-only startup:
 
 `RUST_LOG=info cargo run -p yizutt-runtime -- run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 4 --health-timeout-secs 3`
 
@@ -100,15 +114,11 @@ Run the Python demo after the runtime is running:
 
 This flow needs no real API key. It starts a deterministic local model endpoint, runs the Rust Runtime, submits a task that triggers the `read_file` tool, then verifies memory and skill outputs under `.yizutt/`.
 
-Terminal 1, start the mock model:
+Start the local demo:
 
-`PYTHONPATH=python python examples/local_mock_model.py --port 50990`
+`./scripts/start_local_demo.sh`
 
-Terminal 2, start the runtime and point workers at the mock model:
-
-`PYTHONPATH=python YIZUTT_LOCAL_MODEL_URL=http://127.0.0.1:50990 target/debug/yizutt-runtime run --bind 127.0.0.1:50200 --worker-base-port 50210 --min-workers 1 --max-workers 2`
-
-Terminal 3, submit a tool-using task:
+From another terminal, submit a tool-using task:
 
 `target/debug/yizutt-runtime submit --addr http://127.0.0.1:50200 --session e2e-local --task "Use the read_file tool to read README.md, then summarize the project in one sentence." --context-json '{"provider":"local","max_tool_steps":2,"skill_name":"e2e-local-mock"}'`
 
