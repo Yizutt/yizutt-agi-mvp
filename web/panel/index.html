@@ -3,21 +3,25 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Yizutt AGI Panel</title>
+  <title>Yizutt AGI Workbench</title>
   <style>
     :root {
       color-scheme: light;
-      --bg: #f6f7f9;
+      --bg: #f3f3f0;
       --surface: #ffffff;
-      --surface-alt: #eef2f7;
-      --text: #17202a;
-      --muted: #637083;
-      --line: #d9e0ea;
-      --accent: #146c63;
-      --accent-strong: #0c514a;
+      --surface-soft: #fafaf7;
+      --surface-alt: #eef1ed;
+      --surface-inset: #101413;
+      --text: #171b19;
+      --muted: #66706b;
+      --line: #d8ded8;
+      --line-strong: #c0cac3;
+      --accent: #176f5d;
+      --accent-strong: #0d4f43;
+      --accent-soft: #e4f3ee;
       --danger: #b42318;
       --ok: #147a3f;
-      --warn: #a15c07;
+      --warn: #9a5b05;
       font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
@@ -25,12 +29,18 @@
       box-sizing: border-box;
     }
 
+    html,
+    body {
+      min-height: 100%;
+    }
+
     body {
       margin: 0;
       background: var(--bg);
       color: var(--text);
-      font-size: 15px;
-      line-height: 1.5;
+      font-size: 14px;
+      line-height: 1.45;
+      overflow: hidden;
     }
 
     button,
@@ -46,13 +56,21 @@
       background: var(--accent);
       color: #ffffff;
       cursor: pointer;
-      min-height: 38px;
+      min-height: 36px;
       padding: 0 14px;
       white-space: nowrap;
     }
 
+    button:hover {
+      background: var(--accent-strong);
+    }
+
     button.secondary {
-      background: #253244;
+      background: #2f3834;
+    }
+
+    button.secondary:hover {
+      background: #1e2623;
     }
 
     button:disabled {
@@ -68,11 +86,19 @@
       border-radius: 6px;
       color: var(--text);
       background: #ffffff;
-      padding: 10px 12px;
+      padding: 9px 11px;
+    }
+
+    input:focus,
+    select:focus,
+    textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-soft);
+      outline: none;
     }
 
     select {
-      min-height: 38px;
+      min-height: 36px;
     }
 
     #runtimeAddr,
@@ -83,7 +109,8 @@
     }
 
     textarea {
-      min-height: 134px;
+      min-height: 92px;
+      max-height: 220px;
       resize: vertical;
     }
 
@@ -91,7 +118,8 @@
       display: grid;
       gap: 6px;
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
+      min-width: 0;
     }
 
     pre {
@@ -99,8 +127,8 @@
       overflow: auto;
       white-space: pre-wrap;
       word-break: break-word;
-      font-size: 13px;
-      line-height: 1.45;
+      font-size: 12px;
+      line-height: 1.5;
       color: #26313f;
       direction: ltr;
       text-align: left;
@@ -108,101 +136,199 @@
 
     .shell {
       min-height: 100vh;
+      height: 100vh;
       display: grid;
-      grid-template-rows: auto 1fr;
+      grid-template-rows: auto minmax(0, 1fr);
     }
 
     .topbar {
-      background: var(--surface);
+      background: rgba(255, 255, 255, 0.95);
       border-bottom: 1px solid var(--line);
     }
 
     .topbar-inner {
-      max-width: 1240px;
-      margin: 0 auto;
-      padding: 16px 20px;
+      width: 100%;
+      padding: 12px 16px;
       display: grid;
-      grid-template-columns: minmax(200px, 1fr) minmax(240px, 420px) minmax(160px, 220px) auto;
-      gap: 14px;
+      grid-template-columns: minmax(190px, 260px) minmax(260px, 1fr) minmax(150px, 190px) auto;
+      gap: 12px;
       align-items: end;
     }
 
     .brand {
       display: grid;
       gap: 2px;
+      align-self: center;
     }
 
     .brand h1 {
       margin: 0;
-      font-size: 20px;
-      font-weight: 700;
+      font-size: 18px;
+      font-weight: 720;
+      letter-spacing: 0;
     }
 
     .brand span,
     .status-line {
       color: var(--muted);
-      font-size: 13px;
+      font-size: 12px;
+      overflow-wrap: anywhere;
     }
 
     .content {
-      max-width: 1240px;
       width: 100%;
-      margin: 0 auto;
-      padding: 18px 20px 28px;
+      min-height: 0;
       display: grid;
-      gap: 16px;
+      grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(300px, 380px);
+      overflow: hidden;
     }
 
-    .grid {
+    .activity-rail,
+    .workspace,
+    .inspector {
+      min-width: 0;
+      min-height: 0;
+    }
+
+    .activity-rail,
+    .inspector {
+      background: var(--surface-soft);
       display: grid;
-      grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
-      gap: 16px;
-      align-items: start;
+      overflow: hidden;
+    }
+
+    .activity-rail {
+      grid-template-rows: minmax(0, 1.15fr) minmax(0, 0.85fr);
+      border-right: 1px solid var(--line);
+    }
+
+    .inspector {
+      grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+      border-left: 1px solid var(--line);
+    }
+
+    .workspace {
+      background: var(--surface);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
+    }
+
+    .status-line {
+      border-bottom: 1px solid var(--line);
+      background: #fbfbf8;
+      padding: 9px 16px;
     }
 
     .panel {
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 8px;
+      background: transparent;
+      border-bottom: 1px solid var(--line);
       min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .workspace .panel {
+      border-bottom: 0;
     }
 
     .panel-head {
-      padding: 14px 16px;
+      padding: 12px 14px;
       border-bottom: 1px solid var(--line);
       display: flex;
       justify-content: space-between;
       gap: 10px;
       align-items: center;
+      min-width: 0;
     }
 
     .panel-head h2 {
       margin: 0;
-      font-size: 15px;
-      font-weight: 700;
+      font-size: 13px;
+      font-weight: 720;
+      overflow-wrap: anywhere;
     }
 
     .panel-body {
-      padding: 16px;
+      padding: 12px;
       display: grid;
-      gap: 12px;
+      gap: 10px;
+      overflow: auto;
+      min-height: 0;
+    }
+
+    .task-panel {
+      background: var(--surface);
+    }
+
+    .task-shell {
+      grid-template-rows: minmax(180px, 1fr) auto;
+      gap: 0;
+      padding: 0;
+      overflow: hidden;
+    }
+
+    .task-stream {
+      min-height: 0;
+      overflow: hidden;
+      padding: 14px;
+      background: #f8f8f4;
+      display: grid;
+    }
+
+    .composer {
+      border-top: 1px solid var(--line);
+      background: var(--surface);
+      display: grid;
+      gap: 10px;
+      padding: 12px 14px 14px;
+    }
+
+    .composer-meta {
+      display: grid;
+      grid-template-columns: minmax(140px, 220px) minmax(220px, 1fr);
+      gap: 10px;
+    }
+
+    .composer-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 10px;
+      align-items: end;
+    }
+
+    .task-field {
+      min-width: 0;
     }
 
     .actions {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       flex-wrap: wrap;
       align-items: center;
     }
 
+    .composer-actions {
+      justify-content: flex-end;
+      padding-bottom: 1px;
+    }
+
     .output {
-      border: 1px solid var(--line);
-      border-radius: 6px;
-      background: var(--surface-alt);
-      min-height: 150px;
-      max-height: 420px;
+      border: 1px solid #202925;
+      border-radius: 8px;
+      background: var(--surface-inset);
+      min-height: 0;
+      max-height: none;
       overflow: auto;
-      padding: 12px;
+      padding: 14px;
+    }
+
+    .output pre {
+      color: #dfe9e3;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 12px;
     }
 
     .workers,
@@ -215,7 +341,7 @@
       border: 1px solid var(--line);
       border-radius: 6px;
       background: #ffffff;
-      padding: 10px 12px;
+      padding: 9px 10px;
       display: grid;
       gap: 6px;
       min-width: 0;
@@ -231,8 +357,8 @@
     }
 
     .item-title button {
-      min-height: 30px;
-      padding: 0 10px;
+      min-height: 28px;
+      padding: 0 9px;
       font-size: 12px;
     }
 
@@ -279,18 +405,58 @@
       color: var(--danger);
     }
 
-    @media (max-width: 860px) {
-      .topbar-inner,
-      .grid {
-        grid-template-columns: 1fr;
+    @media (max-width: 1080px) {
+      body {
+        overflow: auto;
+      }
+
+      .shell {
+        height: auto;
       }
 
       .topbar-inner {
-        align-items: stretch;
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .content {
+        grid-template-columns: 1fr;
+        overflow: visible;
+      }
+
+      .activity-rail,
+      .inspector,
+      .workspace {
+        border: 0;
+        overflow: visible;
+      }
+
+      .activity-rail,
+      .inspector {
+        grid-template-rows: none;
+      }
+
+      .panel {
+        min-height: 260px;
+      }
+
+      .workspace .panel {
+        min-height: 620px;
+      }
+    }
+
+    @media (max-width: 680px) {
+      .topbar-inner,
+      .composer-meta,
+      .composer-main {
+        grid-template-columns: 1fr;
       }
 
       button {
         width: 100%;
+      }
+
+      .composer-actions {
+        justify-content: stretch;
       }
     }
   </style>
@@ -300,7 +466,7 @@
     <header class="topbar">
       <div class="topbar-inner">
         <div class="brand">
-          <h1>Yizutt AGI Panel</h1>
+          <h1>Yizutt Workbench</h1>
           <span id="brandSubtitle">本地 Runtime 控制面板</span>
         </div>
         <label id="runtimeLabel">
@@ -323,71 +489,8 @@
       </div>
     </header>
 
-    <main class="content">
-      <div class="status-line" id="statusLine">正在加载面板配置...</div>
-
-      <section class="grid">
-        <div class="panel">
-          <div class="panel-head">
-            <h2 id="submitTitle">提交任务</h2>
-            <span class="badge" id="submitState">空闲</span>
-          </div>
-          <div class="panel-body">
-            <label id="sessionLabel">
-              Session
-              <input id="sessionId" value="panel" autocomplete="off">
-            </label>
-            <label id="taskLabel">
-              任务描述
-              <textarea id="taskInput" placeholder="例如：总结这个项目当前架构，并指出下一步最小改动"></textarea>
-            </label>
-            <label id="contextLabel">
-              Context JSON
-              <input id="contextJson" value="{}" autocomplete="off">
-            </label>
-            <div class="actions">
-              <button id="submitTask" type="button">提交</button>
-              <button id="clearOutput" class="secondary" type="button">清空输出</button>
-            </div>
-            <div class="output">
-              <pre id="taskOutput">等待任务提交。</pre>
-            </div>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head">
-            <h2 id="runtimeTitle">Runtime 状态</h2>
-            <span class="badge" id="runtimeBadge">未知</span>
-          </div>
-          <div class="panel-body">
-            <div class="workers" id="workers"></div>
-          </div>
-        </div>
-      </section>
-
-      <section class="grid">
-        <div class="panel">
-          <div class="panel-head">
-            <h2 id="memoryTitle">最近记忆</h2>
-            <span class="badge" id="memoryBadge">未加载</span>
-          </div>
-          <div class="panel-body">
-            <div class="list" id="memoryList"></div>
-          </div>
-        </div>
-
-        <div class="panel">
-          <div class="panel-head">
-            <h2 id="skillsTitle">技能摘要</h2>
-            <span class="badge" id="skillsBadge">未加载</span>
-          </div>
-          <div class="panel-body">
-            <div class="list" id="skillsList"></div>
-          </div>
-        </div>
-      </section>
-
+    <main class="content" aria-label="Yizutt workbench">
+      <aside class="activity-rail" aria-label="Task activity">
       <section class="panel">
         <div class="panel-head">
           <h2 id="historyTitle">任务历史</h2>
@@ -407,6 +510,79 @@
           <div class="list" id="runtimeTasksList"></div>
         </div>
       </section>
+      </aside>
+
+      <section class="workspace" aria-label="Task workspace">
+        <div class="status-line" id="statusLine">正在加载面板配置...</div>
+
+        <section class="panel task-panel">
+          <div class="panel-head">
+            <h2 id="submitTitle">提交任务</h2>
+            <span class="badge" id="submitState">空闲</span>
+          </div>
+          <div class="panel-body task-shell">
+            <div class="task-stream">
+              <div class="output">
+                <pre id="taskOutput">等待任务提交。</pre>
+              </div>
+            </div>
+            <div class="composer">
+              <div class="composer-meta">
+                <label id="sessionLabel">
+                  Session
+                  <input id="sessionId" value="panel" autocomplete="off">
+                </label>
+                <label id="contextLabel">
+                  Context JSON
+                  <input id="contextJson" value="{}" autocomplete="off">
+                </label>
+              </div>
+              <div class="composer-main">
+                <label id="taskLabel" class="task-field">
+                  任务描述
+                  <textarea id="taskInput" placeholder="例如：总结这个项目当前架构，并指出下一步最小改动"></textarea>
+                </label>
+                <div class="actions composer-actions">
+                  <button id="submitTask" type="button">提交</button>
+                  <button id="clearOutput" class="secondary" type="button">清空输出</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <aside class="inspector" aria-label="Runtime inspector">
+        <section class="panel">
+          <div class="panel-head">
+            <h2 id="runtimeTitle">Runtime 状态</h2>
+            <span class="badge" id="runtimeBadge">未知</span>
+          </div>
+          <div class="panel-body">
+            <div class="workers" id="workers"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2 id="memoryTitle">最近记忆</h2>
+            <span class="badge" id="memoryBadge">未加载</span>
+          </div>
+          <div class="panel-body">
+            <div class="list" id="memoryList"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2 id="skillsTitle">技能摘要</h2>
+            <span class="badge" id="skillsBadge">未加载</span>
+          </div>
+          <div class="panel-body">
+            <div class="list" id="skillsList"></div>
+          </div>
+        </section>
+      </aside>
     </main>
   </div>
 
@@ -416,8 +592,8 @@
         htmlLang: "zh-CN",
         dir: "ltr",
         strings: {
-          documentTitle: "Yizutt AGI 面板",
-          brandSubtitle: "本地 Runtime 控制面板",
+          documentTitle: "Yizutt AGI 工作台",
+          brandSubtitle: "Codex 风格本地 Runtime 工作台",
           runtimeLabel: "Runtime 地址",
           languageLabel: "语言",
           refresh: "刷新",
@@ -444,6 +620,9 @@
           healthy: "健康",
           unhealthy: "异常",
           workerMeta: "{address} · 执行中 {inflight}",
+          runtimeSummaryTitle: "容量与背压",
+          runtimeSummaryMeta: "执行中 {inflight}/{queueDepth} · Worker 上限 {workerLimit} · 背压拒绝 {rejections} · 检查 {checked}",
+          workerRuntimeMeta: "{address} · 执行中 {inflight} · {kind} · sandbox {sandbox}",
           runtimeUnavailable: "Runtime 不可用",
           unavailable: "不可用",
           memoryCount: "{count} 条",
@@ -544,8 +723,8 @@
         htmlLang: "en",
         dir: "ltr",
         strings: {
-          documentTitle: "Yizutt AGI Panel",
-          brandSubtitle: "Local Runtime Control Panel",
+          documentTitle: "Yizutt AGI Workbench",
+          brandSubtitle: "Codex-style local Runtime workbench",
           runtimeLabel: "Runtime address",
           languageLabel: "Language",
           refresh: "Refresh",
@@ -572,6 +751,9 @@
           healthy: "healthy",
           unhealthy: "unhealthy",
           workerMeta: "{address} · inflight {inflight}",
+          runtimeSummaryTitle: "Capacity and Backpressure",
+          runtimeSummaryMeta: "inflight {inflight}/{queueDepth} · worker cap {workerLimit} · backpressure {rejections} · checked {checked}",
+          workerRuntimeMeta: "{address} · inflight {inflight} · {kind} · sandbox {sandbox}",
           runtimeUnavailable: "Runtime unavailable",
           unavailable: "Unavailable",
           memoryCount: "{count} items",
@@ -1089,15 +1271,33 @@
       try {
         const data = await api(`/api/status?runtime_addr=${encodeURIComponent(runtimeAddr())}`);
         const workers = data.workers || [];
+        const runtime = data.runtime || {};
+        const totalInflight = runtime.total_inflight ?? workers.reduce((sum, worker) => sum + Number(worker.inflight || 0), 0);
+        const queueDepth = runtime.max_runtime_queue_depth ?? "-";
+        const workerLimit = runtime.max_inflight_per_worker ?? "-";
+        const rejections = runtime.backpressure_rejections ?? 0;
+        const checked = data.checked_at ? formatTime(data.checked_at) : "";
         setBadge(els.runtimeBadge, t("workersCount", {count: workers.length}), "ok");
+        els.workers.append(item(t("runtimeSummaryTitle"), t("runtimeSummaryMeta", {
+          inflight: totalInflight,
+          queueDepth,
+          workerLimit,
+          rejections,
+          checked
+        })));
         if (!workers.length) {
           els.workers.append(item(t("noWorkerTitle"), t("noWorkerMeta")));
           return;
         }
         for (const worker of workers) {
           const health = worker.healthy ? t("healthy") : t("unhealthy");
-          const meta = t("workerMeta", {address: worker.address, inflight: worker.inflight});
-          els.workers.append(item(`${worker.worker_id} · ${health}`, meta));
+          const meta = t("workerRuntimeMeta", {
+            address: worker.address || "-",
+            inflight: worker.inflight ?? 0,
+            kind: worker.worker_kind || "local",
+            sandbox: worker.sandbox_profile || "process"
+          });
+          els.workers.append(item(`${worker.worker_id} · ${health}`, meta, worker.isolation_status || worker.last_error || ""));
         }
       } catch (err) {
         setBadge(els.runtimeBadge, t("unavailable"), "error");

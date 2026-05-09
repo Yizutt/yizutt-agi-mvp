@@ -21,7 +21,7 @@ Yizutt AGI Runtime 正在从概念验证进入产品化的本地优先 Agent Run
 - 训练数据缓冲区会为成功执行轨迹评分，并可导出 LoRA-ready JSONL 训练任务工件。
 - 成功执行路径会保存成带草稿、replay 检查和 active 状态的 `SKILL.md` 技能文件。
 - `python -m yizutt_agi.real_loop` 可以不启动 Rust Runtime，直接跑一次“任务-记录-存技能”闭环。
-- 本地 Web 面板支持查看 Runtime 状态、Runtime 队列状态、提交任务并流式显示 trace、持久任务历史 replay、查看最近记忆和技能摘要，并支持多语言切换。
+- Codex 风格本地 Web 工作台支持查看 Runtime 状态、Runtime 队列状态、提交任务并流式显示 trace、持久任务历史 replay、查看最近记忆和技能摘要，并支持多语言切换。
 - 最小 Leader/Orchestrator 规划能力会为复杂任务生成结构化 `plan_created` trace 事件。
 - 工具执行带安全审计策略，支持路径白名单、命令白名单、命令沙箱限制和网络 host 白名单，默认拒绝写文件、执行命令和访问内部目录。
 - 最小 MCP stdio client 已作为受控 `mcp_call` executor 工具接入。
@@ -42,7 +42,7 @@ Yizutt AGI Runtime 正在从概念验证进入产品化的本地优先 Agent Run
 - `python/yizutt_agi/panel.py` 提供本地 Web 面板服务，把面板 API 代理到 Runtime CLI，保存面板任务历史，并通过 SSE 桥接流式任务输出。
 - `python/yizutt_agi/real_loop.py` 负责直接跑一次模型-记忆-技能闭环。
 - `python/yizutt_agi/client.py` 是 Python 调 Rust Runtime CLI 的简单客户端。
-- `web/panel/index.html` 是本地面板的浏览器页面，包含实时任务 trace 输出和历史任务 replay。
+- `web/panel/index.html` 是 Codex 风格浏览器工作台，包含历史/队列活动栏、任务流输入区、Runtime 检查器、实时 trace 输出和历史任务 replay。
 - `examples/local_mock_model.py` 提供不需要 API key 的确定性本地模型端点，用于端到端 demo。
 - `examples/echo_mcp_server.py` 是用于本地工具调用验证的极简 MCP stdio server。
 - `examples/skills/echo-skill` 是最小可安装技能包示例。
@@ -117,7 +117,7 @@ Runtime 启动时可以显式恢复未完成日志记录。使用 `--expire-inco
 
 `PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200`
 
-然后在浏览器打开 `http://127.0.0.1:50280`。面板支持编辑 Runtime 地址、查看 Worker 状态、提交任务、回放已保存的任务历史、查看 Runtime 任务队列、查看最近记忆和技能摘要。任务提交会通过 `/api/submit-stream` 把 `submit --stream` 桥接成浏览器 SSE 输出，因此工具调用、工具结果和最终 trace 会在 Worker 运行时实时显示。每次面板提交默认保存到 `.yizutt/panel/history.sqlite3`；可通过 `--history-path` 或 `YIZUTT_PANEL_HISTORY_PATH` 覆盖路径。Runtime 队列默认读取 `.yizutt/runtime/tasks.jsonl`；可通过 `--runtime-home` 或 `YIZUTT_RUNTIME_HOME` 覆盖路径。默认语言是中文-简体，可切换中文-繁体、英语、日语、韩语、阿拉伯语、俄语。模型 API key 只保留在服务端环境变量中，不会暴露给浏览器。
+然后在浏览器打开 `http://127.0.0.1:50280`。Web 工作台使用 Codex 风格布局：左侧是历史任务和 Runtime 队列，中间是实时任务流和输入区，右侧是 Runtime、记忆和技能检查器。它支持编辑 Runtime 地址、查看带 sandbox/backpressure 字段的 Worker 状态、提交任务、回放已保存的任务历史、查看 Runtime 任务队列、查看最近记忆和技能摘要。任务提交会通过 `/api/submit-stream` 把 `submit --stream` 桥接成浏览器 SSE 输出，因此工具调用、工具结果和最终 trace 会在 Worker 运行时实时显示。每次面板提交默认保存到 `.yizutt/panel/history.sqlite3`；可通过 `--history-path` 或 `YIZUTT_PANEL_HISTORY_PATH` 覆盖路径。Runtime 队列默认读取 `.yizutt/runtime/tasks.jsonl`；可通过 `--runtime-home` 或 `YIZUTT_RUNTIME_HOME` 覆盖路径。默认语言是中文-简体，可切换中文-繁体、英语、日语、韩语、阿拉伯语、俄语。模型 API key 只保留在服务端环境变量中，不会暴露给浏览器。
 
 全局语言默认值使用短码。`cnzh` 是默认中文-简体短码。可以用 `--lang cnzh` 启动面板，也可以设置 `YIZUTT_LANG=cnzh`，或使用安装后的入口后缀，例如 `yizutt-panel_cnzh`。支持的入口后缀包括 `_cnzh`、`_twzh`、`_en`、`_ja`、`_ko`、`_ar`、`_ru`。
 
@@ -324,10 +324,10 @@ GitHub Actions 会在 push 到 `main` 和 pull request 时运行核心 CI 检查
 - `target/debug/yizutt-runtime run`
 - `target/debug/yizutt-runtime submit`
 - 通过 OpenAI-compatible 本地代理执行 Python sidecar 真实模型调用
-- 本地 Web 面板的状态、流式任务提交、持久任务历史 replay、记忆、技能 API 和多语言切换
+- 本地 Web 工作台的状态、流式任务提交、持久任务历史 replay、记忆、技能 API 和多语言切换
 - 本地 Web 面板 `/api/submit-stream` SSE 桥接可实时显示 gRPC trace 输出
 - 本地 Web 面板持久任务历史列表和已保存 trace replay
-- 本地 Web 面板 Runtime 队列视图和 CI smoke 覆盖 HTML、配置 API、历史 API、Runtime 任务 API
+- 本地 Web 工作台 Runtime 队列视图和 CI smoke 覆盖 HTML、配置 API、历史 API、Runtime 任务 API
 - gRPC `submit --stream` 可实时返回 accepted、工具调用、工具结果、训练记录、完成事件和最终输出
 - Runtime 持久 `tasks.jsonl` 队列状态和从 `plan_created` 派发并行子任务
 - 依赖感知的子任务波次、重试、最大并发和队列深度拒绝
