@@ -8,9 +8,12 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 从下一版本线开始，项目不再按“demo/MVP”定义范围。mock 模型和 `start_local_demo.sh` 继续作为上手与验收工具存在，但产品目标切换为可日常使用的 Runtime：真实 provider 配置、持久数据升级、可观测调度、发布打包、恢复安全任务执行和 operator 文档都属于版本要求。
 
+产品方向已固定为三条主线：Codex 的功能和执行逻辑作为核心 Agent Runtime；OpenClaw 的 Web 与命令体验作为 operator 入口；Hermes 的记忆和学习能力作为长期成长层。
+
 ## 二、已完成的核心特性
 
 - **项目更名**：对外项目名已从旧名称迁移为 Yizutt AGI。
+- **产品方向三支柱**：README、中文说明、`yizutt --help` 和 `yizutt onboard` 已明确 Codex 风格功能/逻辑、OpenClaw 风格 Web/命令、Hermes 风格记忆/学习能力三条产品主线。
 - **Rust Runtime & WorkerPool**：基于 gRPC 的异步任务调度，支持动态扩容、主动健康检查、健康标记、远程 Worker 注册、准入 backpressure 和显式 sandbox profile。
 - **CLI 入口重写**：使用 `clap` 实现了 `run`、`submit`、`status` 子命令。
 - **持久任务队列**：Runtime 将父任务和子任务状态追加写入 `.yizutt/runtime/tasks.jsonl`，CLI `tasks` 可在 Runtime 重启后查看最近任务状态；启动时可显式恢复未完成任务或标记为过期。
@@ -50,7 +53,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 | 训练任务准备 | `python/yizutt_agi/training.py` | 从 accepted training examples 导出 LoRA-ready dataset 和 job manifest |
 | 技能存储 | `python/yizutt_agi/skills.py` | 技能文件的保存、加载、质量验证和加权召回 |
 | 语言解析 | `python/yizutt_agi/i18n.py` | 统一解析 `cnzh` 等语言短码、环境变量和 CLI 入口后缀 |
-| 全局 CLI | `python/yizutt_agi/cli.py` | `yizutt` 入口，裸命令默认启动本地 Runtime/Web 工作台，并分发 `setup`、`onboard`、`gateway`、`skill`、`start` 等子命令 |
+| 全局 CLI | `python/yizutt_agi/cli.py` | `yizutt` 入口，裸命令默认启动本地 Runtime/Web 工作台，并分发 `setup`、`onboard`、`gateway`、`skill`、`start` 等子命令；`onboard` 输出产品三支柱 |
 | 本地面板服务 | `python/yizutt_agi/panel.py` | 提供 HTTP 面板 API，代理 Runtime CLI，保存任务历史，读取 Runtime 队列、记忆和技能摘要，并用 SSE 桥接流式任务输出 |
 | 本地面板页面 | `web/panel/index.html` | Codex 风格浏览器工作台，提供历史/队列活动栏、任务流输入区、Runtime 检查器、实时 trace、任务历史 replay、记忆和技能视图 |
 | 本地启动脚本 | `scripts/start_local_demo.sh` | 由 `yizutt` 调用，启动 mock 模型、Runtime 和 Web 工作台，并在退出时清理子进程 |
@@ -59,6 +62,9 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 ## 四、架构决策
 
 - **Rust 负责性能敏感层**（调度、隔离、通信），**Python 负责灵活层**（模型调用、工具、记忆、技能）。
+- **Codex 作为核心执行参照**：规划、工具循环、trace、sandbox 策略、任务 handoff 和 Worker 语义优先按严肃 coding agent Runtime 打磨。
+- **OpenClaw 作为操作入口参照**：全局 `yizutt` 命令、`setup/onboard/gateway` 子命令和 Web 工作台承担 operator 体验。
+- **Hermes 作为成长层参照**：持久记忆、检索、技能学习、训练样本缓冲、embedding 召回和 LoRA 准备作为一等能力持续演进。
 - **Worker 隔离机制**：每个本地 Worker 是独立子进程，有独立工作目录 `.yizutt/runtime/workers/<id>/`；可显式开启 `process`、`cgroup` 或 `container` sandbox profile；远程 Worker 由外部运行时管理；Runtime 任务状态以 append-only JSONL 写入 `.yizutt/runtime/tasks.jsonl`，启动恢复同样通过追加日志记录审计。
 - **内存数据非共享**：Worker 之间不直接共享内存状态，必要协作通过 Runtime 分配子任务。
 - **中文分词**：`memory.py` 写入时生成 tokens，查询时命中 `messages_tokens_fts`。
@@ -69,7 +75,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍需深化**：已有最小 `plan_created` 子任务计划、持久任务日志、依赖感知子任务派发、重试、最大并发、队列深度限制、启动恢复/过期策略和准入 backpressure，但还没有优先级队列、延迟调度和完整生产队列语义。
 2. **生产隔离仍需加强**：已有工具级策略、审计、命令超时取消、精简环境、网络 host 白名单、可选 cgroup/container sandbox profile，但还没有跨平台系统级网络 namespace、加固容器镜像和集群级策略下发。
-3. **下一阶段重点**：当前明确任务队列已完成；Web 工作台已具备基础 Runtime/队列健康摘要；后续继续 N3 产品化版本线，优先做稳定配置文件、数据迁移、发布打包、operator 文档、优先级队列和生产可观测性。
+3. **下一阶段重点**：当前明确任务队列已完成；产品方向已固定为 Codex 核心逻辑、OpenClaw Web/命令、Hermes 记忆/学习；后续继续 N3 产品化版本线，优先做稳定配置文件、数据迁移、发布打包、operator 文档、优先级队列和生产可观测性。
 
 ## 六、当前任务队列
 
@@ -636,9 +642,21 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - `yizutt onboard --config <tmp> --json` 和 `yizutt gateway --config <tmp> --json` 可读取同一配置。
 - Python 编译、Rust workspace 检查、CLI 子命令 smoke 通过。
 
+### N3-0.5 已完成：Codex/OpenClaw/Hermes 产品方向固化
+
+**目标**：把产品方向明确为 Codex 的功能和执行逻辑、OpenClaw 的 Web 与命令体验、Hermes 的记忆和学习能力，并让文档和 CLI 输出保持一致。
+
+**完成情况**：README、中文说明和本上下文已增加三支柱产品方向。`python/yizutt_agi/cli.py` 新增 `PRODUCT_PILLARS`，`yizutt --help` 展示产品形态，`yizutt onboard` 和 `yizutt onboard --json` 输出 Codex/OpenClaw/Hermes 三条主线，便于后续产品化任务按这三类能力验收。
+
+**验收标准**：
+- README 和中文说明明确三条产品主线。
+- `yizutt --help` 能看到 Codex/OpenClaw/Hermes 产品形态。
+- `yizutt onboard` 和 `yizutt onboard --json` 能输出三支柱信息。
+- Python 编译、Rust workspace 检查、CLI smoke 通过。
+
 ### 当前任务状态
 
-截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步、N2-3.2 简化本地启动命令、N2-4 生产化隔离/远程 Worker/backpressure/embedding/LoRA 准备、N3-0.1 Codex 风格 Web 工作台、N3-0.2 全局 `yizutt` 启动命令、N3-0.3 `onboard`/`gateway` 产品子命令、N3-0.4 交互式 `yizutt setup` 初始化配置均已完成。下一版本线从 N3 开始，不再只按 demo 验收；下一步继续 N3-0 产品化基线的数据迁移、发布打包和 operator 文档。
+截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步、N2-3.2 简化本地启动命令、N2-4 生产化隔离/远程 Worker/backpressure/embedding/LoRA 准备、N3-0.1 Codex 风格 Web 工作台、N3-0.2 全局 `yizutt` 启动命令、N3-0.3 `onboard`/`gateway` 产品子命令、N3-0.4 交互式 `yizutt setup` 初始化配置、N3-0.5 Codex/OpenClaw/Hermes 产品方向固化均已完成。下一版本线从 N3 开始，不再只按 demo 验收；下一步继续 N3-0 产品化基线的数据迁移、发布打包和 operator 文档。
 
 ## 七、常用开发命令
 

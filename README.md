@@ -6,6 +6,12 @@ Yizutt AGI Runtime is moving from proof-of-concept into a productized local-firs
 
 The current version still keeps a no-key local mock path for onboarding and smoke tests, but the next release line is no longer scoped as a demo. The product target is a usable personal/team agent runtime with durable task state, observable worker scheduling, explicit isolation profiles, real model providers, and upgradeable local data.
 
+## Product Direction
+
+- **Codex-style function and logic**: the core agent loop, planning, tool calls, traces, sandbox decisions, and worker handoff semantics should feel like a serious coding agent runtime.
+- **OpenClaw-style web and commands**: the operator surface is the global `yizutt` command, guided setup/onboard/gateway flows, and the local Web workbench.
+- **Hermes-style memory and learning**: durable memory, retrieval, skill learning, training buffers, embedding recall, and LoRA preparation are first-class product capabilities.
+
 `submit task -> schedule worker -> run Python sidecar -> call model gateway -> write memory -> save skill -> return trace`
 
 ## Features

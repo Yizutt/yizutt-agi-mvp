@@ -12,6 +12,23 @@ DEFAULT_CONFIG_REL = ".yizutt/config.json"
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
+PRODUCT_PILLARS = [
+    {
+        "name": "codex",
+        "focus": "agent function and execution logic",
+        "description": "planner, tool loop, runtime actions, sandbox policy, traces, and task handoff semantics.",
+    },
+    {
+        "name": "openclaw",
+        "focus": "web and command surface",
+        "description": "global yizutt command, setup/onboard/gateway flows, and the browser operator workbench.",
+    },
+    {
+        "name": "hermes",
+        "focus": "memory and learning",
+        "description": "durable memory, retrieval, skill learning, training buffers, and future LoRA workflows.",
+    },
+]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,6 +65,9 @@ Commands:
   gateway   Inspect model gateway provider configuration.
   skill     Manage skill packages.
   start     Compatibility alias for the default startup.
+
+Product shape:
+  Codex-style agent core, OpenClaw-style web/commands, Hermes-style memory/learning.
 
 Examples:
   yizutt
@@ -135,6 +155,7 @@ def onboard_main(argv: list[str]) -> int:
             "path": str(config_path),
             "exists": config_path.exists(),
         },
+        "product_pillars": PRODUCT_PILLARS,
         "python": sys.executable,
         "runtime": {
             "addr": f"http://{env.get('RUNTIME_HOST', '127.0.0.1')}:{runtime_port}",
@@ -193,10 +214,12 @@ def gateway_main(argv: list[str]) -> int:
 
 def print_onboard(report: dict[str, object]) -> None:
     config = report["config"]
+    product_pillars = report["product_pillars"]
     runtime = report["runtime"]
     workbench = report["workbench"]
     data = report["data"]
     assert isinstance(config, dict)
+    assert isinstance(product_pillars, list)
     assert isinstance(runtime, dict)
     assert isinstance(workbench, dict)
     assert isinstance(data, dict)
@@ -207,6 +230,11 @@ def print_onboard(report: dict[str, object]) -> None:
     print(f"Runtime:   {runtime['addr']}")
     print(f"Workbench: {workbench['url']}")
     print(f"Logs:      {data['logs']}")
+    print("")
+    print("Product pillars:")
+    for item in product_pillars:
+        assert isinstance(item, dict)
+        print(f"  {item['name']}: {item['focus']}")
     print("")
     print("Checks:")
     runtime_state = "ok" if runtime["binary_exists"] else "missing, run yizutt once to build it"

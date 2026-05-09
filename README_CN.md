@@ -6,6 +6,12 @@ Yizutt AGI Runtime 正在从概念验证进入产品化的本地优先 Agent Run
 
 当前版本仍保留无 API key 的本地 mock 路径，用于新用户上手和 smoke test；但下一个版本线不再按 demo 定义范围。产品目标是可日常使用的个人/团队 Agent Runtime：具备持久任务状态、可观测调度、显式隔离 profile、真实模型 provider 和可升级的本地数据。
 
+## 产品方向
+
+- **Codex 风格功能与逻辑**：核心 Agent 循环、任务规划、工具调用、trace、sandbox 决策和 Worker handoff 语义要按严肃 coding agent runtime 打磨。
+- **OpenClaw 风格 Web 与命令**：operator 入口以全局 `yizutt` 命令、引导式 setup/onboard/gateway 流程和本地 Web 工作台为主。
+- **Hermes 风格记忆与学习**：持久记忆、检索、技能学习、训练缓冲区、embedding 召回和 LoRA 准备都是一等产品能力。
+
 `提交任务 -> Runtime 调度 Worker -> Worker 启动 Python sidecar -> 调用模型网关 -> 写入记忆 -> 保存技能 -> 返回 trace`
 
 ## 核心能力
