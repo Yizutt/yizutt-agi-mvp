@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from . import skill_market
+from .capabilities import PRODUCT_PILLARS, capability_matrix, evolution_plan, write_evolution_plan
 
 
 CONFIG_VERSION = 1
@@ -12,23 +13,6 @@ DEFAULT_CONFIG_REL = ".yizutt/config.json"
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929"
 DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
-PRODUCT_PILLARS = [
-    {
-        "name": "codex",
-        "focus": "agent function and execution logic",
-        "description": "planner, tool loop, runtime actions, sandbox policy, traces, and task handoff semantics.",
-    },
-    {
-        "name": "openclaw",
-        "focus": "web and command surface",
-        "description": "global yizutt command, setup/onboard/gateway flows, and the browser operator workbench.",
-    },
-    {
-        "name": "hermes",
-        "focus": "memory and learning",
-        "description": "durable memory, retrieval, skill learning, training buffers, and future LoRA workflows.",
-    },
-]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -46,6 +30,10 @@ def main(argv: list[str] | None = None) -> int:
         return onboard_main(args[1:])
     if args[0] == "gateway":
         return gateway_main(args[1:])
+    if args[0] == "capabilities":
+        return capabilities_main(args[1:])
+    if args[0] == "evolve":
+        return evolve_main(args[1:])
     if args[0] == "skill":
         return skill_market.main(args)
 
@@ -63,11 +51,15 @@ Commands:
   setup     Initialize .yizutt/config.json with a guided setup.
   onboard   Show first-run paths, checks, and next commands.
   gateway   Inspect model gateway provider configuration.
+  capabilities
+            Show Codex/OpenClaw/Hermes/evolution capability status.
+  evolve    Generate the next self-evolution task plan.
   skill     Manage skill packages.
   start     Compatibility alias for the default startup.
 
 Product shape:
-  Codex-style agent core, OpenClaw-style web/commands, Hermes-style memory/learning.
+  Codex-style agent core, OpenClaw-style web/commands, Hermes-style memory/learning,
+  plus governed self-evolution.
 
 Examples:
   yizutt
@@ -75,6 +67,8 @@ Examples:
   yizutt --no-build
   yizutt onboard
   yizutt gateway
+  yizutt capabilities
+  yizutt evolve --write
   yizutt gateway status --json
   yizutt skill <install|list> ...
 
@@ -178,6 +172,8 @@ def onboard_main(argv: list[str]) -> int:
             "yizutt",
             "yizutt --no-build",
             "yizutt gateway",
+            "yizutt capabilities",
+            "yizutt evolve",
             "yizutt skill list",
         ],
     }
@@ -209,6 +205,53 @@ def gateway_main(argv: list[str]) -> int:
         print(json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2))
     else:
         print_gateway_status(payload)
+    return 0
+
+
+def capabilities_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="yizutt capabilities",
+        description="Show the Codex/OpenClaw/Hermes/evolution capability matrix.",
+    )
+    parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    args = parser.parse_args(argv)
+
+    payload = capability_matrix()
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print_capabilities(payload)
+    return 0
+
+
+def evolve_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="yizutt evolve",
+        description="Generate a governed self-evolution task plan from current capability gaps.",
+    )
+    parser.add_argument("--project-root", default=os.getenv("YIZUTT_PROJECT_ROOT", ""))
+    parser.add_argument("--limit", type=int, default=8, help="Maximum number of evolution tasks.")
+    parser.add_argument("--write", action="store_true", help="Write the plan to .yizutt/evolution/next_plan.json.")
+    parser.add_argument("--output", default="", help="Override the output path used with --write.")
+    parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    args = parser.parse_args(argv)
+
+    project_root = resolve_project_root(args.project_root)
+    payload = evolution_plan(limit=max(1, min(args.limit, 50)))
+    if args.write:
+        output_path = Path(args.output).expanduser() if args.output else project_root / ".yizutt" / "evolution" / "next_plan.json"
+        if not output_path.is_absolute():
+            output_path = project_root / output_path
+        try:
+            write_evolution_plan(output_path, payload)
+        except OSError as exc:
+            raise SystemExit(f"could not write evolution plan to {output_path}: {exc}") from exc
+        payload["written_to"] = str(output_path)
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print_evolution_plan(payload)
     return 0
 
 
@@ -244,6 +287,62 @@ def print_onboard(report: dict[str, object]) -> None:
     print("Next commands:")
     for command in report["commands"]:
         print(f"  {command}")
+
+
+def print_capabilities(payload: dict[str, object]) -> None:
+    target = payload["target"]
+    summary = payload["summary"]
+    pillars = payload["pillars"]
+    capabilities = payload["capabilities"]
+    assert isinstance(target, dict)
+    assert isinstance(summary, dict)
+    assert isinstance(pillars, list)
+    assert isinstance(capabilities, list)
+
+    print("Yizutt capability matrix")
+    print(f"Target: {target['summary']}")
+    print(
+        "Progress: "
+        f"{summary['implemented']}/{summary['total']} implemented, "
+        f"{summary['partial']} partial, {summary['planned']} planned"
+    )
+    print("")
+    for pillar in pillars:
+        assert isinstance(pillar, dict)
+        print(f"{pillar['name']} - {pillar['focus']}")
+        for item in capabilities:
+            assert isinstance(item, dict)
+            if item["pillar"] != pillar["name"]:
+                continue
+            print(f"  [{item['status']}] {item['name']}")
+            print(f"    next: {item['next_step']}")
+        print("")
+
+
+def print_evolution_plan(payload: dict[str, object]) -> None:
+    summary = payload["summary"]
+    tasks = payload["tasks"]
+    assert isinstance(summary, dict)
+    assert isinstance(tasks, list)
+    print("Yizutt self-evolution plan")
+    print(
+        "Current capability progress: "
+        f"{summary['implemented']}/{summary['total']} implemented, "
+        f"{summary['partial']} partial, {summary['planned']} planned"
+    )
+    written_to = payload.get("written_to")
+    if written_to:
+        print(f"Written to: {written_to}")
+    print("")
+    for index, task in enumerate(tasks, start=1):
+        assert isinstance(task, dict)
+        print(f"{index}. [{task['pillar']}] {task['capability']}")
+        print(f"   objective: {task['objective']}")
+        checks = task.get("acceptance") or []
+        if checks:
+            print(f"   acceptance: {'; '.join(str(check) for check in checks)}")
+    if not tasks:
+        print("No capability gaps are currently queued.")
 
 
 def print_gateway_status(payload: dict[str, object]) -> None:

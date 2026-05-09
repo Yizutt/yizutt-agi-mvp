@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
+from .capabilities import capability_matrix, evolution_plan
 from .i18n import SUPPORTED_LANGUAGE_CODES, resolve_language
 
 
@@ -116,6 +117,12 @@ def make_handler(config: PanelConfig) -> type[BaseHTTPRequestHandler]:
                 return
             if parsed.path == "/api/runtime-tasks":
                 self.send_json(lambda: api_runtime_tasks(config, parsed.query))
+                return
+            if parsed.path == "/api/capabilities":
+                self.send_json(api_capabilities)
+                return
+            if parsed.path == "/api/evolution-plan":
+                self.send_json(lambda: api_evolution_plan(parsed.query))
                 return
             if parsed.path == "/api/config":
                 self.send_json(lambda: api_config(config))
@@ -487,6 +494,15 @@ def api_runtime_tasks(config: PanelConfig, query: str) -> dict[str, Any]:
         return {"ok": True, "exists": False, "path": str(path), "items": []}
     items = run_runtime_json(config, ["tasks", "--home", str(config.runtime_home), "--limit", str(limit)])
     return {"ok": True, "exists": True, "path": str(path), "items": items}
+
+
+def api_capabilities() -> dict[str, Any]:
+    return capability_matrix()
+
+
+def api_evolution_plan(query: str) -> dict[str, Any]:
+    limit = clamp_int(query_value(query, "limit"), default=6, min_value=1, max_value=50)
+    return evolution_plan(limit=limit)
 
 
 def run_runtime_json(config: PanelConfig, args: list[str]) -> Any:

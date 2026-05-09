@@ -30,6 +30,7 @@ The current version still keeps a no-key local mock path for onboarding and smok
 - Codex-style local Web workbench for Runtime status, Runtime queue status, task submission with streaming trace output, persistent task history replay, recent memory, skill summaries, and language switching.
 - Global `yizutt` command starts the local Runtime and Web workbench from any directory, while preserving `yizutt skill ...` package management.
 - Guided `yizutt setup` initializes `.yizutt/config.json` for runtime ports, workbench paths, worker counts, recovery mode, startup build policy, and model gateway defaults.
+- `yizutt capabilities` exposes the Codex/OpenClaw/Hermes/evolution capability matrix, and `yizutt evolve` turns current gaps into self-evolution tasks.
 - Minimal Leader/Orchestrator planning that emits structured `plan_created` trace events for complex tasks.
 - Audited tool policy with path allowlists, command allowlists, command sandbox limits, network host allowlists, and default denial for writes, commands, and internal directories.
 - Minimal MCP stdio client exposed as a gated `mcp_call` executor tool.
@@ -48,6 +49,7 @@ The current version still keeps a no-key local mock path for onboarding and smok
 - `python/yizutt_agi/skills.py` stores reusable skills as `SKILL.md` files.
 - `python/yizutt_agi/i18n.py` resolves global language short codes, environment defaults, and CLI entrypoint suffixes.
 - `python/yizutt_agi/cli.py` is the global `yizutt` entrypoint for startup and utility subcommands.
+- `python/yizutt_agi/capabilities.py` is the shared capability registry and self-evolution task planner used by CLI and Web.
 - `python/yizutt_agi/panel.py` serves the local Web panel, proxies panel API calls to the runtime CLI, stores panel task history, and bridges streaming task output over SSE.
 - `python/yizutt_agi/real_loop.py` runs one direct model-memory-skill loop without starting the Rust runtime.
 - `python/yizutt_agi/client.py` calls the Rust runtime CLI from Python.
@@ -92,6 +94,10 @@ Useful product commands:
 
 `yizutt gateway`
 
+`yizutt capabilities`
+
+`yizutt evolve --write`
+
 `yizutt skill list`
 
 Manual runtime-only startup:
@@ -134,7 +140,7 @@ Start the local Web panel:
 
 `PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200`
 
-Open `http://127.0.0.1:50280` in a browser. The Web workbench uses a Codex-style layout: saved runs and Runtime queue on the left, the live task stream and composer in the center, and Runtime/memory/skill inspectors on the right. It lets you edit the Runtime address, inspect workers with sandbox/backpressure fields, submit a task, replay saved task history, inspect the Runtime task queue, and view recent memory and skills. Task submission uses `/api/submit-stream` to bridge `submit --stream` into browser SSE output, so tool calls, tool results, and final trace lines appear while the worker is running. Each panel submission is stored in `.yizutt/panel/history.sqlite3` by default; override it with `--history-path` or `YIZUTT_PANEL_HISTORY_PATH`. Runtime queue status is read from `.yizutt/runtime/tasks.jsonl` by default; override it with `--runtime-home` or `YIZUTT_RUNTIME_HOME`. The default UI language is Simplified Chinese, with Traditional Chinese, English, Japanese, Korean, Arabic, and Russian available from the language selector. Model API keys stay in the server environment and are not exposed to the browser.
+Open `http://127.0.0.1:50280` in a browser. The Web workbench uses a Codex-style layout: saved runs and Runtime queue on the left, the live task stream and composer in the center, and Runtime/memory/skill/capability inspectors on the right. It lets you edit the Runtime address, inspect workers with sandbox/backpressure fields, submit a task, replay saved task history, inspect the Runtime task queue, view recent memory and skills, and track the Codex/OpenClaw/Hermes/evolution capability matrix with next self-evolution tasks. Task submission uses `/api/submit-stream` to bridge `submit --stream` into browser SSE output, so tool calls, tool results, and final trace lines appear while the worker is running. Each panel submission is stored in `.yizutt/panel/history.sqlite3` by default; override it with `--history-path` or `YIZUTT_PANEL_HISTORY_PATH`. Runtime queue status is read from `.yizutt/runtime/tasks.jsonl` by default; override it with `--runtime-home` or `YIZUTT_RUNTIME_HOME`. The default UI language is Simplified Chinese, with Traditional Chinese, English, Japanese, Korean, Arabic, and Russian available from the language selector. Model API keys stay in the server environment and are not exposed to the browser.
 
 Global language defaults use short codes. `cnzh` is the default Simplified Chinese code. You can start the panel with `--lang cnzh`, set `YIZUTT_LANG=cnzh`, or use an installed entrypoint suffix such as `yizutt-panel_cnzh`. Supported entrypoint suffixes are `_cnzh`, `_twzh`, `_en`, `_ja`, `_ko`, `_ar`, and `_ru`.
 

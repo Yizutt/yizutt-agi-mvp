@@ -203,7 +203,7 @@
     }
 
     .inspector {
-      grid-template-rows: auto minmax(0, 1fr) minmax(0, 1fr);
+      grid-template-rows: minmax(0, 1fr) minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 0.9fr);
       border-left: 1px solid var(--line);
     }
 
@@ -565,6 +565,16 @@
 
         <section class="panel">
           <div class="panel-head">
+            <h2 id="capabilitiesTitle">能力与进化</h2>
+            <span class="badge" id="capabilitiesBadge">未加载</span>
+          </div>
+          <div class="panel-body">
+            <div class="list" id="capabilitiesList"></div>
+          </div>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
             <h2 id="memoryTitle">最近记忆</h2>
             <span class="badge" id="memoryBadge">未加载</span>
           </div>
@@ -609,6 +619,11 @@
           taskWaiting: "等待任务提交。",
           runtimeTitle: "Runtime 状态",
           unknown: "未知",
+          capabilitiesTitle: "能力与进化",
+          capabilitiesCount: "{implemented}/{total} 已完成",
+          capabilitiesReadFailed: "能力矩阵读取失败",
+          evolutionNextTitle: "下一步自进化任务",
+          evolutionNextMeta: "{count} 个待推进能力缺口",
           memoryTitle: "最近记忆",
           notLoaded: "未加载",
           skillsTitle: "技能摘要",
@@ -740,6 +755,11 @@
           taskWaiting: "Waiting for a task.",
           runtimeTitle: "Runtime Status",
           unknown: "Unknown",
+          capabilitiesTitle: "Capabilities and Evolution",
+          capabilitiesCount: "{implemented}/{total} implemented",
+          capabilitiesReadFailed: "Capability matrix read failed",
+          evolutionNextTitle: "Next Self-Evolution Tasks",
+          evolutionNextMeta: "{count} capability gaps queued",
           memoryTitle: "Recent Memory",
           notLoaded: "Not loaded",
           skillsTitle: "Skill Summary",
@@ -1057,6 +1077,9 @@
       runtimeTitle: document.querySelector("#runtimeTitle"),
       runtimeBadge: document.querySelector("#runtimeBadge"),
       workers: document.querySelector("#workers"),
+      capabilitiesTitle: document.querySelector("#capabilitiesTitle"),
+      capabilitiesBadge: document.querySelector("#capabilitiesBadge"),
+      capabilitiesList: document.querySelector("#capabilitiesList"),
       memoryTitle: document.querySelector("#memoryTitle"),
       memoryBadge: document.querySelector("#memoryBadge"),
       memoryList: document.querySelector("#memoryList"),
@@ -1141,6 +1164,8 @@
       }
       els.runtimeTitle.textContent = t("runtimeTitle");
       setBadge(els.runtimeBadge, t("unknown"));
+      els.capabilitiesTitle.textContent = t("capabilitiesTitle");
+      setBadge(els.capabilitiesBadge, t("notLoaded"));
       els.memoryTitle.textContent = t("memoryTitle");
       setBadge(els.memoryBadge, t("notLoaded"));
       els.skillsTitle.textContent = t("skillsTitle");
@@ -1305,6 +1330,35 @@
       }
     }
 
+    async function refreshCapabilities() {
+      els.capabilitiesList.innerHTML = "";
+      try {
+        const data = await api("/api/capabilities");
+        const plan = await api("/api/evolution-plan?limit=4");
+        const summary = data.summary || {};
+        const capabilities = data.capabilities || [];
+        const pillars = data.pillars || [];
+        setBadge(els.capabilitiesBadge, t("capabilitiesCount", {
+          implemented: summary.implemented ?? 0,
+          total: summary.total ?? capabilities.length
+        }), summary.partial || summary.planned ? "warn" : "ok");
+        for (const pillar of pillars) {
+          const rows = capabilities
+            .filter((capability) => capability.pillar === pillar.name)
+            .map((capability) => `[${capability.status}] ${capability.name}`);
+          els.capabilitiesList.append(item(pillar.name, pillar.focus || "", rows.join("\n")));
+        }
+        const tasks = plan.tasks || [];
+        if (tasks.length) {
+          const body = tasks.map((task, index) => `${index + 1}. [${task.pillar}] ${task.capability}\n${task.objective}`).join("\n\n");
+          els.capabilitiesList.append(item(t("evolutionNextTitle"), t("evolutionNextMeta", {count: tasks.length}), body));
+        }
+      } catch (err) {
+        setBadge(els.capabilitiesBadge, t("error"), "error");
+        els.capabilitiesList.append(item(t("capabilitiesReadFailed"), err.message));
+      }
+    }
+
     async function refreshMemory() {
       els.memoryList.innerHTML = "";
       try {
@@ -1391,7 +1445,14 @@
     }
 
     async function refreshAll() {
-      await Promise.allSettled([refreshStatus(), refreshMemory(), refreshSkills(), refreshHistory(), refreshRuntimeTasks()]);
+      await Promise.allSettled([
+        refreshStatus(),
+        refreshCapabilities(),
+        refreshMemory(),
+        refreshSkills(),
+        refreshHistory(),
+        refreshRuntimeTasks()
+      ]);
     }
 
     async function submitTask() {
