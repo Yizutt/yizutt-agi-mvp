@@ -272,6 +272,17 @@ Manual check:
 
 GitHub Actions runs the core CI checks on push to `main` and on pull requests: `cargo check --workspace --locked`, `cargo build --workspace --locked`, and `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`.
 
+Deep local validation was last run on May 9, 2026 with:
+
+- `cargo fmt --check`
+- `cargo check --workspace --locked`
+- `cargo clippy --workspace --locked --all-targets -- -D warnings`
+- `cargo test --workspace --locked`
+- `cargo build --workspace --locked`
+- `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
+- Python behavior assertions for tool policy, command timeout cancellation, network denial, graph/vector memory, and skill ranking
+- Local mock-model integration covering Runtime status, unary submit, streaming submit, persisted `tasks` lookup, Web panel config/history/runtime-task APIs, and startup `--expire-incomplete-tasks` / `--resume-incomplete-tasks`
+
 The current prototype has been run locally with:
 
 - `cargo build`
@@ -308,7 +319,7 @@ The current prototype has been run locally with:
 
 ## MVP Boundaries
 
-This is not a production agent runtime yet. Worker sandboxes are local child processes with separate working directories. The WorkerPool performs basic dynamic scale-up but does not yet implement cgroups, containers, remote workers, durable queues, long-running tool execution, LoRA training jobs, embedding-model semantic vectors, or production-grade backpressure.
+This is not a production agent runtime yet. Worker sandboxes are local child processes with separate working directories. The WorkerPool performs basic dynamic scale-up but does not yet implement cgroups, containers, remote workers, priority queues, long-running tool execution controls, LoRA training jobs, embedding-model semantic vectors, or production-grade backpressure.
 
 ## Roadmap
 

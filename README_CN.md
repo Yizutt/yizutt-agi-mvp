@@ -274,6 +274,17 @@ MCP 默认同样拒绝访问。如需调用 MCP stdio server，需要传入 `con
 
 GitHub Actions 会在 push 到 `main` 和 pull request 时运行核心 CI 检查：`cargo check --workspace --locked`、`cargo build --workspace --locked` 和 `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py`。
 
+最近一次深度本地验证在 2026-05-09 完成，覆盖：
+
+- `cargo fmt --check`
+- `cargo check --workspace --locked`
+- `cargo clippy --workspace --locked --all-targets -- -D warnings`
+- `cargo test --workspace --locked`
+- `cargo build --workspace --locked`
+- `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
+- Python 行为断言：工具策略、命令超时取消、网络默认拒绝、图/向量记忆、技能排序
+- 本地 mock 模型集成：Runtime status、一元 submit、流式 submit、持久 `tasks` 查询、Web 面板 config/history/runtime-task API，以及启动 `--expire-incomplete-tasks` / `--resume-incomplete-tasks`
+
 当前原型已经在本地验证：
 
 - `cargo build`
@@ -310,7 +321,7 @@ GitHub Actions 会在 push 到 `main` 和 pull request 时运行核心 CI 检查
 
 ## MVP 边界
 
-这还不是生产级 Agent Runtime。当前 Worker 沙箱只是本地子进程和独立工作目录；WorkerPool 只有基础动态扩容；还没有 cgroups、容器、远程 Worker、持久队列、长任务工具执行、LoRA 训练任务、基于 embedding 模型的语义向量和生产级背压。
+这还不是生产级 Agent Runtime。当前 Worker 沙箱只是本地子进程和独立工作目录；WorkerPool 只有基础动态扩容；还没有 cgroups、容器、远程 Worker、优先级队列、长任务工具执行控制、LoRA 训练任务、基于 embedding 模型的语义向量和生产级背压。
 
 ## 后续路线
 

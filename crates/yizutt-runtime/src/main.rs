@@ -7,7 +7,7 @@ use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -25,7 +25,9 @@ use yizutt::runtime_service_client::RuntimeServiceClient;
 use yizutt::runtime_service_server::{RuntimeService, RuntimeServiceServer};
 use yizutt::worker_service_client::WorkerServiceClient;
 use yizutt::worker_service_server::{WorkerService, WorkerServiceServer};
-use yizutt::{Empty, PoolStatusReply, TaskReply, TaskRequest, TraceEvent, WorkerHealth, WorkerSnapshot};
+use yizutt::{
+    Empty, PoolStatusReply, TaskReply, TaskRequest, TraceEvent, WorkerHealth, WorkerSnapshot,
+};
 
 #[derive(Parser, Debug)]
 #[command(name = "yizutt-runtime", version, about = "Yizutt AGI local runtime")]
@@ -106,6 +108,17 @@ struct RuntimeConfig {
     project_root: PathBuf,
     task_timeout_secs: u64,
     health_timeout_secs: u64,
+}
+
+struct RunOptions {
+    bind: String,
+    worker_base_port: u16,
+    min_workers: usize,
+    max_workers: usize,
+    home: PathBuf,
+    task_timeout_secs: u64,
+    health_timeout_secs: u64,
+    recovery_mode: RecoveryMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -379,8 +392,7 @@ impl TaskLog {
 fn is_final_task_status(status: &str) -> bool {
     matches!(
         status,
-        "ok"
-            | "error"
+        "ok" | "error"
             | "failed"
             | "completed"
             | "completed_with_parallel_subtasks"
@@ -397,30 +409,66 @@ fn incomplete_task_records(path: PathBuf) -> Result<Vec<TaskLogRecord>> {
         .collect())
 }
 
-fn make_task_log_record(
+struct TaskLogRecordDraft<'a> {
     task_id: String,
     parent_task_id: String,
-    kind: &str,
-    req: &TaskRequest,
-    status: &str,
+    kind: &'a str,
+    req: &'a TaskRequest,
+    status: &'a str,
     worker_id: String,
     worker_task_id: String,
     output: String,
     trace_summary: String,
-) -> TaskLogRecord {
-    TaskLogRecord {
-        task_id,
-        parent_task_id,
-        kind: kind.to_string(),
-        session_id: req.session_id.clone(),
-        task: req.task.clone(),
-        context_json: req.context_json.clone(),
-        worker_id,
-        worker_task_id,
-        status: status.to_string(),
-        output: truncate(&output, 2000),
-        trace_summary: truncate(&trace_summary, 1200),
-        timestamp: Utc::now().to_rfc3339(),
+}
+
+impl<'a> TaskLogRecordDraft<'a> {
+    fn new(
+        task_id: String,
+        parent_task_id: String,
+        kind: &'a str,
+        req: &'a TaskRequest,
+        status: &'a str,
+    ) -> Self {
+        Self {
+            task_id,
+            parent_task_id,
+            kind,
+            req,
+            status,
+            worker_id: String::new(),
+            worker_task_id: String::new(),
+            output: String::new(),
+            trace_summary: String::new(),
+        }
+    }
+
+    fn worker(mut self, worker_id: String, worker_task_id: String) -> Self {
+        self.worker_id = worker_id;
+        self.worker_task_id = worker_task_id;
+        self
+    }
+
+    fn output(mut self, output: String, trace_summary: String) -> Self {
+        self.output = output;
+        self.trace_summary = trace_summary;
+        self
+    }
+
+    fn build(self) -> TaskLogRecord {
+        TaskLogRecord {
+            task_id: self.task_id,
+            parent_task_id: self.parent_task_id,
+            kind: self.kind.to_string(),
+            session_id: self.req.session_id.clone(),
+            task: self.req.task.clone(),
+            context_json: self.req.context_json.clone(),
+            worker_id: self.worker_id,
+            worker_task_id: self.worker_task_id,
+            status: self.status.to_string(),
+            output: truncate(&self.output, 2000),
+            trace_summary: truncate(&self.trace_summary, 1200),
+            timestamp: Utc::now().to_rfc3339(),
+        }
     }
 }
 
@@ -459,17 +507,14 @@ impl RuntimeService for RuntimeServer {
         let runtime_task_id = Uuid::new_v4().to_string();
         append_task_log(
             self.task_log.clone(),
-            make_task_log_record(
+            TaskLogRecordDraft::new(
                 runtime_task_id.clone(),
                 String::new(),
                 "task_stream",
                 &task,
                 "queued",
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-            ),
+            )
+            .build(),
         )
         .await;
         let (idx, addr, worker_id) = {
@@ -489,17 +534,15 @@ impl RuntimeService for RuntimeServer {
         tokio::spawn(async move {
             append_task_log(
                 task_log.clone(),
-                make_task_log_record(
+                TaskLogRecordDraft::new(
                     runtime_task_id.clone(),
                     String::new(),
                     "task_stream",
                     &task,
                     "running",
-                    worker_id.clone(),
-                    String::new(),
-                    String::new(),
-                    String::new(),
-                ),
+                )
+                .worker(worker_id.clone(), String::new())
+                .build(),
             )
             .await;
             let mut final_status = "error".to_string();
@@ -540,17 +583,16 @@ impl RuntimeService for RuntimeServer {
             if let Err(err) = call_result {
                 append_task_log(
                     task_log,
-                    make_task_log_record(
+                    TaskLogRecordDraft::new(
                         runtime_task_id,
                         String::new(),
                         "task_stream",
                         &task_for_log,
                         "error",
-                        worker_id,
-                        final_worker_task_id,
-                        err.to_string(),
-                        String::new(),
-                    ),
+                    )
+                    .worker(worker_id, final_worker_task_id)
+                    .output(err.to_string(), String::new())
+                    .build(),
                 )
                 .await;
                 let _ = tx.send(Err(err)).await;
@@ -681,17 +723,14 @@ async fn execute_top_level_task(
 ) -> std::result::Result<TaskReply, Status> {
     append_task_log(
         task_log.clone(),
-        make_task_log_record(
+        TaskLogRecordDraft::new(
             runtime_task_id.clone(),
             String::new(),
             "task",
             &task,
             "queued",
-            String::new(),
-            String::new(),
-            String::new(),
-            String::new(),
-        ),
+        )
+        .build(),
     )
     .await;
     let mut reply = dispatch_runtime_task(
@@ -718,21 +757,21 @@ async fn execute_top_level_task(
                 "parent": serde_json::from_str::<Value>(&reply.output).unwrap_or_else(|_| json!(reply.output)),
                 "parallel_subtasks": subtask_results,
             });
-            reply.output = serde_json::to_string_pretty(&summary).unwrap_or_else(|_| summary.to_string());
+            reply.output =
+                serde_json::to_string_pretty(&summary).unwrap_or_else(|_| summary.to_string());
             reply.trace_json = merge_parallel_trace(&reply.trace_json, &summary);
             append_task_log(
                 task_log,
-                make_task_log_record(
+                TaskLogRecordDraft::new(
                     runtime_task_id,
                     String::new(),
                     "task",
                     &task,
                     "completed_with_parallel_subtasks",
-                    reply.worker_id.clone(),
-                    reply.task_id.clone(),
-                    reply.output.clone(),
-                    trace_summary(&reply.trace_json),
-                ),
+                )
+                .worker(reply.worker_id.clone(), reply.task_id.clone())
+                .output(reply.output.clone(), trace_summary(&reply.trace_json))
+                .build(),
             )
             .await;
         }
@@ -760,24 +799,25 @@ async fn dispatch_runtime_task(
     };
     append_task_log(
         task_log.clone(),
-        make_task_log_record(
+        TaskLogRecordDraft::new(
             runtime_task_id.clone(),
             parent_task_id.clone(),
             kind,
             &task,
             "running",
-            worker_id.clone(),
-            String::new(),
-            String::new(),
-            String::new(),
-        ),
+        )
+        .worker(worker_id.clone(), String::new())
+        .build(),
     )
     .await;
     let call_result = async {
         let mut client = WorkerServiceClient::connect(addr.clone())
             .await
             .map_err(|e| Status::unavailable(e.to_string()))?;
-        let reply = client.execute(Request::new(task.clone())).await?.into_inner();
+        let reply = client
+            .execute(Request::new(task.clone()))
+            .await?
+            .into_inner();
         Ok::<TaskReply, Status>(reply)
     }
     .await;
@@ -794,17 +834,16 @@ async fn dispatch_runtime_task(
         Ok(reply) => {
             append_task_log(
                 task_log,
-                make_task_log_record(
+                TaskLogRecordDraft::new(
                     runtime_task_id,
                     parent_task_id,
                     kind,
                     &task,
                     &reply.status,
-                    worker_id,
-                    reply.task_id.clone(),
-                    reply.output.clone(),
-                    trace_summary(&reply.trace_json),
-                ),
+                )
+                .worker(worker_id, reply.task_id.clone())
+                .output(reply.output.clone(), trace_summary(&reply.trace_json))
+                .build(),
             )
             .await;
             Ok(reply)
@@ -812,17 +851,10 @@ async fn dispatch_runtime_task(
         Err(err) => {
             append_task_log(
                 task_log,
-                make_task_log_record(
-                    runtime_task_id,
-                    parent_task_id,
-                    kind,
-                    &task,
-                    "error",
-                    worker_id,
-                    String::new(),
-                    err.to_string(),
-                    String::new(),
-                ),
+                TaskLogRecordDraft::new(runtime_task_id, parent_task_id, kind, &task, "error")
+                    .worker(worker_id, String::new())
+                    .output(err.to_string(), String::new())
+                    .build(),
             )
             .await;
             Err(err)
@@ -898,7 +930,13 @@ async fn dispatch_parallel_subtasks(
                 let req = TaskRequest {
                     session_id: parent.session_id.clone(),
                     task: plan.objective.clone(),
-                    context_json: child_context(&parent.context_json, &parent_task_id, &plan.id, &parent.task).to_string(),
+                    context_json: child_context(
+                        &parent.context_json,
+                        &parent_task_id,
+                        &plan.id,
+                        &parent.task,
+                    )
+                    .to_string(),
                 };
                 let pool = pool.clone();
                 let task_log = task_log.clone();
@@ -918,14 +956,20 @@ async fn dispatch_parallel_subtasks(
             for handle in handles {
                 match handle.await {
                     Ok(item) => {
-                        let id = item.get("id").and_then(Value::as_str).unwrap_or("").to_string();
+                        let id = item
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
                         let ok = item.get("status").and_then(Value::as_str) == Some("ok");
                         if !id.is_empty() {
                             completed.insert(id, ok);
                         }
                         results.push(item);
                     }
-                    Err(err) => results.push(json!({"status": "join_error", "error": err.to_string()})),
+                    Err(err) => {
+                        results.push(json!({"status": "join_error", "error": err.to_string()}))
+                    }
                 }
             }
         }
@@ -994,17 +1038,18 @@ async fn dispatch_subtask_with_retries(
         };
         append_task_log(
             task_log.clone(),
-            make_task_log_record(
+            TaskLogRecordDraft::new(
                 runtime_subtask_id.clone(),
                 parent_task_id.clone(),
                 "subtask",
                 &req,
-                if attempt == 0 { "queued" } else { "retry_queued" },
-                String::new(),
-                String::new(),
-                String::new(),
-                String::new(),
-            ),
+                if attempt == 0 {
+                    "queued"
+                } else {
+                    "retry_queued"
+                },
+            )
+            .build(),
         )
         .await;
         let result = dispatch_runtime_task(
@@ -1067,7 +1112,9 @@ fn should_execute_plan_parallel(context_json: &str) -> bool {
 fn truthy(value: Option<&Value>) -> bool {
     match value {
         Some(Value::Bool(flag)) => *flag,
-        Some(Value::String(text)) => matches!(text.to_lowercase().as_str(), "1" | "true" | "yes" | "on"),
+        Some(Value::String(text)) => {
+            matches!(text.to_lowercase().as_str(), "1" | "true" | "yes" | "on")
+        }
         Some(Value::Number(number)) => number.as_i64().unwrap_or_default() != 0,
         _ => false,
     }
@@ -1075,7 +1122,10 @@ fn truthy(value: Option<&Value>) -> bool {
 
 fn context_usize(context: &Value, key: &str, default: usize) -> usize {
     match context.get(key) {
-        Some(Value::Number(number)) => number.as_u64().map(|value| value as usize).unwrap_or(default),
+        Some(Value::Number(number)) => number
+            .as_u64()
+            .map(|value| value as usize)
+            .unwrap_or(default),
         Some(Value::String(text)) => text.parse::<usize>().unwrap_or(default),
         _ => default,
     }
@@ -1122,8 +1172,14 @@ fn extract_plan_subtasks(trace_json: &str) -> Vec<Value> {
     Vec::new()
 }
 
-fn child_context(parent_context_json: &str, parent_task_id: &str, subtask_id: &str, parent_task: &str) -> Value {
-    let mut context = serde_json::from_str::<Value>(parent_context_json).unwrap_or_else(|_| json!({}));
+fn child_context(
+    parent_context_json: &str,
+    parent_task_id: &str,
+    subtask_id: &str,
+    parent_task: &str,
+) -> Value {
+    let mut context =
+        serde_json::from_str::<Value>(parent_context_json).unwrap_or_else(|_| json!({}));
     if !context.is_object() {
         context = json!({});
     }
@@ -1131,9 +1187,18 @@ fn child_context(parent_context_json: &str, parent_task_id: &str, subtask_id: &s
         map.insert("orchestrate".to_string(), Value::Bool(false));
         map.insert("execute_plan".to_string(), Value::Bool(false));
         map.insert("execute_plan_parallel".to_string(), Value::Bool(false));
-        map.insert("parent_task_id".to_string(), Value::String(parent_task_id.to_string()));
-        map.insert("subtask_id".to_string(), Value::String(subtask_id.to_string()));
-        map.insert("parent_task".to_string(), Value::String(parent_task.to_string()));
+        map.insert(
+            "parent_task_id".to_string(),
+            Value::String(parent_task_id.to_string()),
+        );
+        map.insert(
+            "subtask_id".to_string(),
+            Value::String(subtask_id.to_string()),
+        );
+        map.insert(
+            "parent_task".to_string(),
+            Value::String(parent_task.to_string()),
+        );
     }
     context
 }
@@ -1141,8 +1206,14 @@ fn child_context(parent_context_json: &str, parent_task_id: &str, subtask_id: &s
 fn merge_parallel_trace(parent_trace_json: &str, parallel_summary: &Value) -> String {
     let mut trace = serde_json::from_str::<Value>(parent_trace_json).unwrap_or_else(|_| json!({}));
     if let Some(map) = trace.as_object_mut() {
-        map.insert("parallel_subtasks".to_string(), parallel_summary["parallel_subtasks"].clone());
-        map.insert("parallel_finished_at".to_string(), Value::String(Utc::now().to_rfc3339()));
+        map.insert(
+            "parallel_subtasks".to_string(),
+            parallel_summary["parallel_subtasks"].clone(),
+        );
+        map.insert(
+            "parallel_finished_at".to_string(),
+            Value::String(Utc::now().to_rfc3339()),
+        );
     }
     trace.to_string()
 }
@@ -1276,128 +1347,125 @@ fn execute_sidecar_stream(
         let error_task_id = task_id.clone();
         let error_worker_id = worker_id.clone();
         let stream_tx = tx.clone();
-        let run_result = timeout(
-            Duration::from_secs(timeout_secs),
-            async move {
-                let started_at = Utc::now().to_rfc3339();
-                let context = serde_json::from_str::<Value>(&req.context_json).unwrap_or(json!({}));
-                let python = env::var("YIZUTT_PYTHON").unwrap_or_else(|_| "python".to_string());
-                let mut child = Command::new(python)
-                    .arg("-m")
-                    .arg("yizutt_agi.executor")
-                    .arg("--task-id")
-                    .arg(&task_id)
-                    .arg("--worker-id")
-                    .arg(&worker_id)
-                    .arg("--session-id")
-                    .arg(&req.session_id)
-                    .arg("--task")
-                    .arg(&req.task)
-                    .arg("--context-json")
-                    .arg(&req.context_json)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .kill_on_drop(true)
-                    .spawn()
-                    .with_context(|| "spawn python sidecar for stream")?;
-                let stdout = child
-                    .stdout
-                    .take()
-                    .ok_or_else(|| anyhow!("python sidecar stdout was not captured"))?;
-                let stderr = child.stderr.take();
-                let stderr_task = tokio::spawn(async move {
-                    let mut text = String::new();
-                    if let Some(mut stderr) = stderr {
-                        let _ = stderr.read_to_string(&mut text).await;
-                    }
-                    text
+        let run_result = timeout(Duration::from_secs(timeout_secs), async move {
+            let started_at = Utc::now().to_rfc3339();
+            let context = serde_json::from_str::<Value>(&req.context_json).unwrap_or(json!({}));
+            let python = env::var("YIZUTT_PYTHON").unwrap_or_else(|_| "python".to_string());
+            let mut child = Command::new(python)
+                .arg("-m")
+                .arg("yizutt_agi.executor")
+                .arg("--task-id")
+                .arg(&task_id)
+                .arg("--worker-id")
+                .arg(&worker_id)
+                .arg("--session-id")
+                .arg(&req.session_id)
+                .arg("--task")
+                .arg(&req.task)
+                .arg("--context-json")
+                .arg(&req.context_json)
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()
+                .with_context(|| "spawn python sidecar for stream")?;
+            let stdout = child
+                .stdout
+                .take()
+                .ok_or_else(|| anyhow!("python sidecar stdout was not captured"))?;
+            let stderr = child.stderr.take();
+            let stderr_task = tokio::spawn(async move {
+                let mut text = String::new();
+                if let Some(mut stderr) = stderr {
+                    let _ = stderr.read_to_string(&mut text).await;
+                }
+                text
+            });
+            let mut lines = BufReader::new(stdout).lines();
+            let mut events = Vec::new();
+            let mut final_output = String::new();
+            while let Some(line) = lines.next_line().await? {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let event = serde_json::from_str::<Value>(&line).unwrap_or_else(|_| {
+                    json!({
+                        "event_type": "stdout",
+                        "payload": line,
+                        "timestamp": Utc::now().to_rfc3339()
+                    })
                 });
-                let mut lines = BufReader::new(stdout).lines();
-                let mut events = Vec::new();
-                let mut final_output = String::new();
-                while let Some(line) = lines.next_line().await? {
-                    if line.trim().is_empty() {
-                        continue;
-                    }
-                    let event = serde_json::from_str::<Value>(&line).unwrap_or_else(|_| {
-                        json!({
-                            "event_type": "stdout",
-                            "payload": line,
-                            "timestamp": Utc::now().to_rfc3339()
-                        })
-                    });
-                    if event.get("event_type").and_then(Value::as_str) == Some("output") {
-                        if let Some(payload) = event.get("payload").and_then(Value::as_str) {
-                            final_output.push_str(payload);
-                        }
-                    }
-                    if event.get("event_type").and_then(Value::as_str) == Some("completed")
-                        && final_output.is_empty()
-                    {
-                        if let Some(payload) = event.get("payload").and_then(Value::as_str) {
-                            final_output.push_str(payload);
-                        }
-                    }
-                    events.push(event.clone());
-                    if stream_tx
-                        .send(Ok(TraceEvent {
-                            task_id: task_id.clone(),
-                            worker_id: worker_id.clone(),
-                            event_json: event.to_string(),
-                            final_event: false,
-                            status: "event".to_string(),
-                            output: String::new(),
-                        }))
-                        .await
-                        .is_err()
-                    {
-                        return Ok::<(), anyhow::Error>(());
+                if event.get("event_type").and_then(Value::as_str) == Some("output") {
+                    if let Some(payload) = event.get("payload").and_then(Value::as_str) {
+                        final_output.push_str(payload);
                     }
                 }
-                let status = child.wait().await?;
-                let stderr = stderr_task.await.unwrap_or_default();
-                let finished_at = Utc::now().to_rfc3339();
-                let trace = json!({
-                    "task_id": task_id,
-                    "session_id": req.session_id,
-                    "worker_id": worker_id,
-                    "started_at": started_at,
-                    "finished_at": finished_at,
-                    "context": context,
-                    "events": events,
-                    "stderr": stderr.trim(),
-                    "sidecar_status": status.code()
-                });
-                let stream_status = if status.success() { "ok" } else { "error" };
-                if final_output.is_empty() {
-                    final_output = if status.success() {
-                        "task completed without output".to_string()
-                    } else {
-                        format!("python sidecar failed: {}", stderr.trim())
-                    };
+                if event.get("event_type").and_then(Value::as_str) == Some("completed")
+                    && final_output.is_empty()
+                {
+                    if let Some(payload) = event.get("payload").and_then(Value::as_str) {
+                        final_output.push_str(payload);
+                    }
                 }
-                let _ = stream_tx
+                events.push(event.clone());
+                if stream_tx
                     .send(Ok(TraceEvent {
-                        task_id: trace
-                            .get("task_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        worker_id: trace
-                            .get("worker_id")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        event_json: trace.to_string(),
-                        final_event: true,
-                        status: stream_status.to_string(),
-                        output: final_output,
+                        task_id: task_id.clone(),
+                        worker_id: worker_id.clone(),
+                        event_json: event.to_string(),
+                        final_event: false,
+                        status: "event".to_string(),
+                        output: String::new(),
                     }))
-                    .await;
-                Ok::<(), anyhow::Error>(())
-            },
-        )
+                    .await
+                    .is_err()
+                {
+                    return Ok::<(), anyhow::Error>(());
+                }
+            }
+            let status = child.wait().await?;
+            let stderr = stderr_task.await.unwrap_or_default();
+            let finished_at = Utc::now().to_rfc3339();
+            let trace = json!({
+                "task_id": task_id,
+                "session_id": req.session_id,
+                "worker_id": worker_id,
+                "started_at": started_at,
+                "finished_at": finished_at,
+                "context": context,
+                "events": events,
+                "stderr": stderr.trim(),
+                "sidecar_status": status.code()
+            });
+            let stream_status = if status.success() { "ok" } else { "error" };
+            if final_output.is_empty() {
+                final_output = if status.success() {
+                    "task completed without output".to_string()
+                } else {
+                    format!("python sidecar failed: {}", stderr.trim())
+                };
+            }
+            let _ = stream_tx
+                .send(Ok(TraceEvent {
+                    task_id: trace
+                        .get("task_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    worker_id: trace
+                        .get("worker_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    event_json: trace.to_string(),
+                    final_event: true,
+                    status: stream_status.to_string(),
+                    output: final_output,
+                }))
+                .await;
+            Ok::<(), anyhow::Error>(())
+        })
         .await;
         match run_result {
             Ok(Ok(())) => {}
@@ -1512,7 +1580,11 @@ async fn recover_incomplete_tasks(
     if incomplete.is_empty() {
         return Ok(());
     }
-    info!(count = incomplete.len(), ?mode, "recovering incomplete task log records");
+    info!(
+        count = incomplete.len(),
+        ?mode,
+        "recovering incomplete task log records"
+    );
     for record in incomplete {
         let req = TaskRequest {
             session_id: record.session_id.clone(),
@@ -1523,44 +1595,41 @@ async fn recover_incomplete_tasks(
             RecoveryMode::Expire => {
                 append_task_log(
                     task_log.clone(),
-                    make_task_log_record(
+                    TaskLogRecordDraft::new(
                         record.task_id,
                         record.parent_task_id,
                         &record.kind,
                         &req,
                         "expired_on_startup",
-                        String::new(),
-                        record.worker_task_id,
+                    )
+                    .worker(String::new(), record.worker_task_id)
+                    .output(
                         "task expired by runtime startup recovery".to_string(),
                         "expired_on_startup".to_string(),
-                    ),
+                    )
+                    .build(),
                 )
                 .await;
             }
             RecoveryMode::Resume => {
                 append_task_log(
                     task_log.clone(),
-                    make_task_log_record(
+                    TaskLogRecordDraft::new(
                         record.task_id.clone(),
                         record.parent_task_id.clone(),
                         &record.kind,
                         &req,
                         "recovery_queued",
-                        String::new(),
-                        record.worker_task_id.clone(),
-                        String::new(),
-                        "recovery_queued".to_string(),
-                    ),
+                    )
+                    .worker(String::new(), record.worker_task_id.clone())
+                    .output(String::new(), "recovery_queued".to_string())
+                    .build(),
                 )
                 .await;
                 if record.parent_task_id.is_empty() && record.kind == "task" {
-                    let _ = execute_top_level_task(
-                        pool.clone(),
-                        task_log.clone(),
-                        record.task_id,
-                        req,
-                    )
-                    .await;
+                    let _ =
+                        execute_top_level_task(pool.clone(), task_log.clone(), record.task_id, req)
+                            .await;
                 } else {
                     let _ = dispatch_runtime_task(
                         pool.clone(),
@@ -1579,26 +1648,17 @@ async fn recover_incomplete_tasks(
     Ok(())
 }
 
-async fn run_runtime(
-    bind: String,
-    worker_base_port: u16,
-    min_workers: usize,
-    max_workers: usize,
-    home: PathBuf,
-    task_timeout_secs: u64,
-    health_timeout_secs: u64,
-    recovery_mode: RecoveryMode,
-) -> Result<()> {
-    fs::create_dir_all(home.join("workers"))?;
+async fn run_runtime(options: RunOptions) -> Result<()> {
+    fs::create_dir_all(options.home.join("workers"))?;
     let cfg = RuntimeConfig {
-        bind: bind.clone(),
-        worker_base_port,
-        min_workers,
-        max_workers,
-        home,
+        bind: options.bind.clone(),
+        worker_base_port: options.worker_base_port,
+        min_workers: options.min_workers,
+        max_workers: options.max_workers,
+        home: options.home,
         project_root: env::current_dir()?,
-        task_timeout_secs,
-        health_timeout_secs,
+        task_timeout_secs: options.task_timeout_secs,
+        health_timeout_secs: options.health_timeout_secs,
     };
     let pool = Arc::new(Mutex::new(WorkerPool::new(cfg.clone()).await?));
     let task_log = Arc::new(Mutex::new(TaskLog::new(cfg.home.join("tasks.jsonl"))?));
@@ -1606,14 +1666,14 @@ async fn run_runtime(
         pool.clone(),
         task_log.clone(),
         cfg.home.join("tasks.jsonl"),
-        recovery_mode,
+        options.recovery_mode,
     )
     .await?;
     let server = RuntimeServer {
         pool,
         task_log,
-        min_workers,
-        max_workers,
+        min_workers: cfg.min_workers,
+        max_workers: cfg.max_workers,
     };
     let addr: SocketAddr = cfg.bind.parse()?;
     info!(%addr, "runtime listening");
@@ -1714,7 +1774,7 @@ fn run_tasks(home: PathBuf, limit: usize) -> Result<()> {
     Ok(())
 }
 
-fn python_path(project_root: &PathBuf) -> String {
+fn python_path(project_root: &Path) -> String {
     let package_path = project_root.join("python");
     match env::var("PYTHONPATH") {
         Ok(existing) if !existing.is_empty() => format!("{}:{existing}", package_path.display()),
@@ -1752,7 +1812,7 @@ async fn main() -> Result<()> {
             } else {
                 RecoveryMode::None
             };
-            run_runtime(
+            run_runtime(RunOptions {
                 bind,
                 worker_base_port,
                 min_workers,
@@ -1761,7 +1821,7 @@ async fn main() -> Result<()> {
                 task_timeout_secs,
                 health_timeout_secs,
                 recovery_mode,
-            )
+            })
             .await
         }
         Commands::Worker {

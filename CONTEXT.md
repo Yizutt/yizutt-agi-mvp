@@ -24,6 +24,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **主动健康检查**：Runtime `status` 会主动探测 Worker RPC 和 Python sidecar 导入状态，任务级错误返回 `status: "error"`，不再误杀 Worker。
 - **开源许可证**：仓库根目录已添加 MIT `LICENSE`，README 和中文说明已同步许可证信息。
 - **基础 CI**：GitHub Actions 会在 push 到 `main` 和 pull request 时运行 Rust 与 Python 基础检查，并启动本地 Web 面板做 HTML、配置 API 和历史 API smoke。
+- **深度验证基线**：2026-05-09 本地通过 `cargo fmt --check`、`cargo check`、`cargo clippy -D warnings`、`cargo test`、`cargo build`、Python 编译/行为断言、mock Runtime 集成、面板 API smoke 和启动恢复验证。
 - **端到端本地 Mock Demo**：`examples/local_mock_model.py` 可提供无 API key 的确定性模型端点，README 已给出 Runtime、工具调用、记忆查询和技能生成的完整流程。
 - **SQLite Graph Memory**：`memory.py` 在 FTS5 之外增加实体/关系表，自动抽取简单用户偏好、项目技术事实和 requires/improves 关系，支持带分数的跨会话图谱查询、一跳关联推理上下文，并向 executor/real_loop 注入图谱上下文。
 - **稀疏向量记忆**：`memory.py` 为每条消息持久化 `memory_vectors` 稀疏 token 向量，支持 cosine 相似检索，并向 executor/real_loop 注入 vector context。
@@ -484,6 +485,29 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 过期恢复：写入一个 queued 任务到临时 `tasks.jsonl`，启动 `target/debug/yizutt-runtime run --home .yizutt/recovery-test --expire-incomplete-tasks` 后，`target/debug/yizutt-runtime tasks --home .yizutt/recovery-test --limit 5` 应显示 `expired_on_startup`
 - 恢复执行：启动 `examples/local_mock_model.py`，写入一个带本地 provider/context 的 queued 任务，启动 `target/debug/yizutt-runtime run --home .yizutt/recovery-resume-test --resume-incomplete-tasks` 后，`tasks` 应显示该任务最终进入 `ok`
 
+### N2-3.1 已完成：深度测试与说明同步
+
+**目标**：在 N2-3 完成后补齐说明文档，并用更严格的本地验证覆盖核心 Runtime、Python 行为、Web 面板和恢复路径。
+
+**涉及文件**：
+- `crates/yizutt-runtime/src/main.rs`
+- `crates/yizutt-runtime/src/yizutt.rs`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**完成情况**：已把深度验证矩阵写入 README 和 README_CN，并修正 MVP 边界中已过期的“没有持久队列”描述。Rust Runtime 侧为了通过 `cargo clippy --workspace --locked --all-targets -- -D warnings`，将任务日志记录构造改为 `TaskLogRecordDraft` builder，将 Runtime 启动参数收束为 `RunOptions`，并把 `python_path` 改为接收 `&Path`；同时执行 `cargo fmt` 统一格式。
+
+**已通过验证**：
+- `cargo fmt --check`
+- `cargo check --workspace --locked`
+- `cargo clippy --workspace --locked --all-targets -- -D warnings`
+- `cargo test --workspace --locked`
+- `cargo build --workspace --locked`
+- `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
+- Python 行为断言：工具策略、命令超时取消、网络默认拒绝、图/向量记忆、技能排序
+- 本地 mock 集成：Runtime status、一元 submit、流式 submit、持久 `tasks` 查询、Web 面板 config/history/runtime-task API、启动 `--expire-incomplete-tasks` 和 `--resume-incomplete-tasks`
+
 ### N2-4 建议任务：容器或 OS sandbox Worker 隔离
 
 **目标**：在现有工具级策略和 Worker 子进程隔离基础上，增加可选的系统级隔离边界，降低命令工具和 sidecar 执行的生产风险。
@@ -503,7 +527,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 ### 当前任务状态
 
-截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行均已完成。下一个建议任务是 N2-4：容器或 OS sandbox Worker 隔离。
+截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步均已完成。下一个建议任务是 N2-4：容器或 OS sandbox Worker 隔离。
 
 ## 七、常用开发命令
 

@@ -343,7 +343,8 @@ pub mod runtime_service_server {
                     impl<T: RuntimeService> tonic::server::ServerStreamingService<TaskRequest> for SubmitStreamSvc<T> {
                         type Response = TraceEvent;
                         type ResponseStream = T::SubmitStreamStream;
-                        type Future = BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+                        type Future =
+                            BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
                         fn call(&mut self, request: tonic::Request<TaskRequest>) -> Self::Future {
                             let inner = self.0.clone();
                             let fut = async move { inner.submit_stream(request).await };
@@ -489,7 +490,8 @@ pub mod worker_service_server {
                     impl<T: WorkerService> tonic::server::ServerStreamingService<TaskRequest> for ExecuteStreamSvc<T> {
                         type Response = TraceEvent;
                         type ResponseStream = T::ExecuteStreamStream;
-                        type Future = BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
+                        type Future =
+                            BoxFuture<tonic::Response<Self::ResponseStream>, tonic::Status>;
                         fn call(&mut self, request: tonic::Request<TaskRequest>) -> Self::Future {
                             let inner = self.0.clone();
                             let fut = async move { inner.execute_stream(request).await };
