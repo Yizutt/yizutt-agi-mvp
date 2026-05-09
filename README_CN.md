@@ -69,7 +69,7 @@ Rust 构建使用 vendored `protoc`，不需要系统预装 `protoc`。
 
 `yizutt`
 
-然后在浏览器打开 `http://127.0.0.1:50280`。该命令会启动确定性 mock 模型、Rust Runtime 和 Web 工作台，日志写入 `.yizutt/local-demo/logs`，按 Ctrl-C 会同时停止这三个进程。`yizutt start` 是显式等价命令；`yizutt skill ...` 继续用于技能包管理。
+然后在浏览器打开 `http://127.0.0.1:50280`。该命令会启动确定性 mock 模型、Rust Runtime 和 Web 工作台，日志写入 `.yizutt/local-demo/logs`，按 Ctrl-C 会同时停止这三个进程。`yizutt start` 保留为兼容别名；产品功能命令使用 `yizutt onboard`、`yizutt gateway`、`yizutt skill ...` 这类子命令。
 
 常用覆盖参数：
 
@@ -77,7 +77,15 @@ Rust 构建使用 vendored `protoc`，不需要系统预装 `protoc`。
 
 `PANEL_PORT=50880 RUNTIME_PORT=50800 MOCK_PORT=50890 yizutt`
 
-`yizutt start --no-build`
+`yizutt --no-build`
+
+常用产品命令：
+
+`yizutt onboard`
+
+`yizutt gateway`
+
+`yizutt skill list`
 
 只手动启动 Runtime：
 
@@ -327,7 +335,7 @@ GitHub Actions 会在 push 到 `main` 和 pull request 时运行核心 CI 检查
 - `target/debug/yizutt-runtime submit`
 - 通过 OpenAI-compatible 本地代理执行 Python sidecar 真实模型调用
 - 本地 Web 工作台的状态、流式任务提交、持久任务历史 replay、记忆、技能 API 和多语言切换
-- 从仓库外路径执行全局 `yizutt` 启动检查，包括 `yizutt start --dry-run` 和临时端口 Web API smoke
+- 从仓库外路径执行全局 `yizutt` 启动检查，包括 `yizutt --dry-run`、`yizutt onboard`、`yizutt gateway` 和临时端口 Web API smoke
 - 本地 Web 面板 `/api/submit-stream` SSE 桥接可实时显示 gRPC trace 输出
 - 本地 Web 面板持久任务历史列表和已保存 trace replay
 - 本地 Web 工作台 Runtime 队列视图和 CI smoke 覆盖 HTML、配置 API、历史 API、Runtime 任务 API

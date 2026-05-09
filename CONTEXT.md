@@ -22,7 +22,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **工具安全审计与基础沙箱**：工具执行默认拒绝写文件、命令执行、内部路径访问和命令网络访问，支持 `allowed_paths`、`allowed_commands`、`allowed_network_hosts` 显式授权；命令工具使用精简环境、超时上限、输出上限和进程组取消，并在 trace 中记录脱敏参数摘要、允许状态和拒绝原因。
 - **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
 - **本地 Web 工作台**：`python -m yizutt_agi.panel` 可启动 Codex 风格浏览器工作台，左侧查看历史任务和 Runtime 队列，中间提交任务并实时显示 trace，右侧检查 Runtime、记忆和技能；Runtime 状态会显示 Worker、sandbox、backpressure 摘要，并支持全局语言短码切换，默认 `cnzh` 中文-简体，可切换繁体中文、英语、日语、韩语、阿拉伯语、俄语。
-- **全局启动命令**：安装 Python 包后可在任意路径执行 `yizutt`，自动构建并启动 mock 模型、Rust Runtime 和 Web 工作台，默认访问 `http://127.0.0.1:50280`，Ctrl-C 会清理所有子进程；`yizutt skill ...` 继续用于技能包管理。
+- **全局 CLI**：安装 Python 包后可在任意路径执行裸 `yizutt` 默认启动 mock 模型、Rust Runtime 和 Web 工作台，默认访问 `http://127.0.0.1:50280`，Ctrl-C 会清理所有子进程；产品功能使用 `yizutt onboard`、`yizutt gateway`、`yizutt skill ...` 等子命令。
 - **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回；`execute_plan_parallel=true` 时 Runtime 会持久化计划，并按 `depends_on`、最大并发、队列深度和重试策略派发子任务。
 - **主动健康检查**：Runtime `status` 会主动探测 Worker RPC 和 Python sidecar 导入状态，任务级错误返回 `status: "error"`，不再误杀 Worker。
 - **开源许可证**：仓库根目录已添加 MIT `LICENSE`，README 和中文说明已同步许可证信息。
@@ -50,7 +50,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 | 训练任务准备 | `python/yizutt_agi/training.py` | 从 accepted training examples 导出 LoRA-ready dataset 和 job manifest |
 | 技能存储 | `python/yizutt_agi/skills.py` | 技能文件的保存、加载、质量验证和加权召回 |
 | 语言解析 | `python/yizutt_agi/i18n.py` | 统一解析 `cnzh` 等语言短码、环境变量和 CLI 入口后缀 |
-| 全局 CLI | `python/yizutt_agi/cli.py` | `yizutt` 入口，默认启动本地 Runtime/Web 工作台，并分发 `start`、`skill` 等子命令 |
+| 全局 CLI | `python/yizutt_agi/cli.py` | `yizutt` 入口，裸命令默认启动本地 Runtime/Web 工作台，并分发 `onboard`、`gateway`、`skill`、`start` 等子命令 |
 | 本地面板服务 | `python/yizutt_agi/panel.py` | 提供 HTTP 面板 API，代理 Runtime CLI，保存任务历史，读取 Runtime 队列、记忆和技能摘要，并用 SSE 桥接流式任务输出 |
 | 本地面板页面 | `web/panel/index.html` | Codex 风格浏览器工作台，提供历史/队列活动栏、任务流输入区、Runtime 检查器、实时 trace、任务历史 replay、记忆和技能视图 |
 | 本地启动脚本 | `scripts/start_local_demo.sh` | 由 `yizutt` 调用，启动 mock 模型、Runtime 和 Web 工作台，并在退出时清理子进程 |
@@ -604,7 +604,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 **目标**：把启动命令收敛为 `yizutt`，并保证用户在任意路径执行该命令都能启动本地 mock 模型、Runtime 和 Web 工作台。
 
-**完成情况**：新增 `python/yizutt_agi/cli.py`，并把 `pyproject.toml` 中的 `yizutt` console script 从技能市场入口切换到统一 CLI。裸 `yizutt` 和 `yizutt start` 默认启动 `scripts/start_local_demo.sh`，CLI 会从 `YIZUTT_PROJECT_ROOT`、当前路径或已安装模块位置解析项目根目录并以该根目录运行脚本，因此不依赖用户当前目录。`yizutt skill install/list` 继续委托给原 `skill_market.py`，不破坏已有技能包命令。`yizutt start` 支持 `--no-build`、端口、worker、日志目录、Runtime home、恢复策略等参数，和原脚本的环境变量覆盖兼容。
+**完成情况**：新增 `python/yizutt_agi/cli.py`，并把 `pyproject.toml` 中的 `yizutt` console script 从技能市场入口切换到统一 CLI。裸 `yizutt` 默认启动 `scripts/start_local_demo.sh`，`yizutt start` 保留为兼容别名；CLI 会从 `YIZUTT_PROJECT_ROOT`、当前路径或已安装模块位置解析项目根目录并以该根目录运行脚本，因此不依赖用户当前目录。`yizutt skill install/list` 继续委托给原 `skill_market.py`，不破坏已有技能包命令。裸 `yizutt` 支持 `--no-build`、端口、worker、日志目录、Runtime home、恢复策略等参数，和原脚本的环境变量覆盖兼容。
 
 **验收标准**：
 - `python -m pip install -e .` 后 `command -v yizutt` 能找到全局入口。
@@ -612,9 +612,21 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 从仓库外路径执行临时端口的 `yizutt` 能启动 panel `/api/config`。
 - `yizutt skill list` 仍可使用。
 
+### N3-0.3 已完成：`onboard` / `gateway` 产品子命令
+
+**目标**：明确 CLI 语义：`yizutt` 是默认启动入口，产品功能以 `yizutt onboard`、`yizutt gateway` 这类子命令暴露。
+
+**完成情况**：`python/yizutt_agi/cli.py` 新增 `onboard` 和 `gateway` 子命令。`yizutt onboard` 输出项目根目录、Python 路径、Runtime 地址、Workbench URL、日志和数据路径、runtime binary 检查、gateway 摘要和下一步常用命令；支持 `--json`。`yizutt gateway` 输出 OpenAI、Anthropic、本地模型 provider 是否已配置、模型名、base URL/API style 和认证变量名，但不会打印密钥值；支持 `gateway status` 兼容写法和 `--json`。README、中文说明和本上下文已同步命令形态。
+
+**验收标准**：
+- 裸 `yizutt --dry-run --no-build` 仍按默认启动路径解析。
+- `yizutt onboard` / `yizutt onboard --json` 可在仓库外路径运行。
+- `yizutt gateway` / `yizutt gateway status --json` 可在仓库外路径运行，不泄露密钥值。
+- `yizutt skill list` 仍可使用。
+
 ### 当前任务状态
 
-截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步、N2-3.2 简化本地启动命令、N2-4 生产化隔离/远程 Worker/backpressure/embedding/LoRA 准备、N3-0.1 Codex 风格 Web 工作台、N3-0.2 全局 `yizutt` 启动命令均已完成。下一版本线从 N3 开始，不再只按 demo 验收；下一步继续 N3-0 产品化基线的稳定配置、数据迁移、发布打包和 operator 文档。
+截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步、N2-3.2 简化本地启动命令、N2-4 生产化隔离/远程 Worker/backpressure/embedding/LoRA 准备、N3-0.1 Codex 风格 Web 工作台、N3-0.2 全局 `yizutt` 启动命令、N3-0.3 `onboard`/`gateway` 产品子命令均已完成。下一版本线从 N3 开始，不再只按 demo 验收；下一步继续 N3-0 产品化基线的稳定配置、数据迁移、发布打包和 operator 文档。
 
 ## 七、常用开发命令
 
