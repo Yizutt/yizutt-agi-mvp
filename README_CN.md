@@ -1,10 +1,10 @@
-# Yizutt AGI MVP 中文说明
+# Yizutt AGI Runtime 中文说明
 
 [![CI](https://github.com/Yizutt/yizutt-agi-mvp/actions/workflows/ci.yml/badge.svg)](https://github.com/Yizutt/yizutt-agi-mvp/actions/workflows/ci.yml)
 
-Yizutt AGI MVP 是一个可运行的进化型终端 Agent 运行时原型。它用 Rust 实现本地 gRPC Runtime、Worker 进程管理和 WorkerPool 调度，用 Python sidecar 负责真实任务执行、模型调用、工作记忆和技能文件沉淀。
+Yizutt AGI Runtime 正在从概念验证进入产品化的本地优先 Agent Runtime。它用 Rust 实现本地 gRPC Runtime、Worker 进程管理和 WorkerPool 调度，用 Python sidecar 负责真实任务执行、模型调用、工作记忆、技能文件沉淀、训练数据准备和运行控制。
 
-这个仓库的目标不是一次性做完整 AGI 系统，而是先验证最核心闭环：
+当前版本仍保留无 API key 的本地 mock 路径，用于新用户上手和 smoke test；但下一个版本线不再按 demo 定义范围。产品目标是可日常使用的个人/团队 Agent Runtime：具备持久任务状态、可观测调度、显式隔离 profile、真实模型 provider 和可升级的本地数据。
 
 `提交任务 -> Runtime 调度 Worker -> Worker 启动 Python sidecar -> 调用模型网关 -> 写入记忆 -> 保存技能 -> 返回 trace`
 
@@ -155,7 +155,7 @@ OpenAI：
 
 `export YIZUTT_OPENAI_MODEL=gpt-5.4-mini`
 
-`python -m yizutt_agi.real_loop --provider openai --task "用五点总结 Yizutt AGI MVP 架构"`
+`python -m yizutt_agi.real_loop --provider openai --task "用五点总结 Yizutt AGI Runtime 架构"`
 
 Anthropic：
 
@@ -163,7 +163,7 @@ Anthropic：
 
 `export YIZUTT_ANTHROPIC_MODEL=claude-sonnet-4-5-20250929`
 
-`python -m yizutt_agi.real_loop --provider anthropic --task "用五点总结 Yizutt AGI MVP 架构"`
+`python -m yizutt_agi.real_loop --provider anthropic --task "用五点总结 Yizutt AGI Runtime 架构"`
 
 OpenAI-compatible 本地代理：
 
@@ -351,13 +351,15 @@ GitHub Actions 会在 push 到 `main` 和 pull request 时运行核心 CI 检查
 - 基于技能步骤正文的排序召回和 workflow 组合
 - 训练样本评分、accepted-only 缓冲区查询和 LoRA dataset/job manifest 准备
 
-## MVP 边界
+## 产品化边界
 
-这还不是完整托管的生产级 Agent Runtime。当前已具备可选 cgroup/container sandbox profile、远程 Worker 注册、准入 backpressure、dense embedding 存储和 LoRA 任务准备。剩余生产缺口包括优先级队列、集群调度、加固容器镜像、各平台系统级网络 namespace、真实 trainer 执行/adapter artifact 生命周期和生产级可观测性。
+mock 模型和 `start_local_demo.sh` 继续作为上手与验收工具存在，但不再代表产品边界。下一个版本线会把真实 provider 配置、持久数据升级、操作者可见状态、发布打包和恢复安全的任务执行作为产品要求。剩余生产缺口包括优先级队列、集群调度、加固容器镜像、各平台系统级网络 namespace、真实 trainer 执行/adapter artifact 生命周期和生产级可观测性。
 
 ## 后续路线
 
-- 用容器或 OS sandbox 加强 Worker 隔离。
+- N3-0：产品化基线，包含稳定配置文件、数据迁移、发布打包和 operator 文档。
+- N3-1：优先级队列和生产可观测性。
+- N3-2：本地、容器和远程 Worker 模式的加固部署 profile。
 
 ## 许可证
 

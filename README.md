@@ -1,10 +1,10 @@
-# Yizutt AGI MVP
+# Yizutt AGI Runtime
 
 [![CI](https://github.com/Yizutt/yizutt-agi-mvp/actions/workflows/ci.yml/badge.svg)](https://github.com/Yizutt/yizutt-agi-mvp/actions/workflows/ci.yml)
 
-Yizutt AGI MVP is a runnable prototype for an evolvable terminal-agent runtime. It combines a Rust gRPC runtime and worker pool with a Python sidecar that handles model calls, working memory, and reusable skill files.
+Yizutt AGI Runtime is moving from proof-of-concept into a productized local-first agent runtime. It combines a Rust gRPC runtime and worker pool with a Python sidecar that handles model calls, working memory, reusable skill files, training data preparation, and operational controls.
 
-This repository is intentionally small. Its goal is to prove the core loop:
+The current version still keeps a no-key local mock path for onboarding and smoke tests, but the next release line is no longer scoped as a demo. The product target is a usable personal/team agent runtime with durable task state, observable worker scheduling, explicit isolation profiles, real model providers, and upgradeable local data.
 
 `submit task -> schedule worker -> run Python sidecar -> call model gateway -> write memory -> save skill -> return trace`
 
@@ -153,7 +153,7 @@ OpenAI:
 
 `export YIZUTT_OPENAI_MODEL=gpt-5.4-mini`
 
-`python -m yizutt_agi.real_loop --provider openai --task "Summarize the Yizutt AGI MVP architecture in five bullets."`
+`python -m yizutt_agi.real_loop --provider openai --task "Summarize the Yizutt AGI Runtime architecture in five bullets."`
 
 Anthropic:
 
@@ -161,7 +161,7 @@ Anthropic:
 
 `export YIZUTT_ANTHROPIC_MODEL=claude-sonnet-4-5-20250929`
 
-`python -m yizutt_agi.real_loop --provider anthropic --task "Summarize the Yizutt AGI MVP architecture in five bullets."`
+`python -m yizutt_agi.real_loop --provider anthropic --task "Summarize the Yizutt AGI Runtime architecture in five bullets."`
 
 OpenAI-compatible local proxy:
 
@@ -349,13 +349,15 @@ The current prototype has been run locally with:
 - Ranked skill search and workflow composition based on skill step content
 - Training example scoring, accepted-only buffer lookup, and LoRA dataset/job manifest preparation
 
-## MVP Boundaries
+## Productization Boundary
 
-This is not a fully managed production agent runtime yet. It now has opt-in cgroup/container sandbox profiles, remote worker registration, admission backpressure, dense embedding storage, and LoRA job preparation. Remaining production gaps include priority queues, cluster scheduling, hardened container images, system-level network namespaces on every platform, actual trainer execution/adaptor artifact lifecycle, and production observability.
+The mock model and `start_local_demo.sh` remain as onboarding and verification tools, not the product boundary. The next version line treats real provider configuration, persistent upgrades, operator-visible status, release packaging, and recovery-safe task execution as product requirements. Remaining production gaps include priority queues, cluster scheduling, hardened container images, system-level network namespaces on every platform, actual trainer execution/adaptor artifact lifecycle, and production observability.
 
 ## Roadmap
 
-- Add stronger worker isolation with containers or OS sandboxing.
+- N3-0: productization baseline with stable config files, data migrations, release packaging, and operator docs.
+- N3-1: priority queue and production observability.
+- N3-2: hardened deployment profiles for local, container, and remote-worker modes.
 
 ## License
 

@@ -1,10 +1,12 @@
-# CONTEXT.md — Yizutt AGI MVP 项目状态
+# CONTEXT.md — Yizutt AGI Runtime 项目状态
 
 本文档供 AI 助手快速理解项目结构、约束和当前任务。执行任务时以第六节为当前目标。
 
 ## 一、项目简介
 
-Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rust 核心运行时 + Python 技能层的混合架构。目标是实现本地优先、模型无关、越用越聪明的个人 AI 助手。
+Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rust 核心运行时 + Python 技能层的混合架构。目标是实现本地优先、模型无关、越用越聪明的个人/团队 AI 助手。
+
+从下一版本线开始，项目不再按“demo/MVP”定义范围。mock 模型和 `start_local_demo.sh` 继续作为上手与验收工具存在，但产品目标切换为可日常使用的 Runtime：真实 provider 配置、持久数据升级、可观测调度、发布打包、恢复安全任务执行和 operator 文档都属于版本要求。
 
 ## 二、已完成的核心特性
 
@@ -66,7 +68,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍需深化**：已有最小 `plan_created` 子任务计划、持久任务日志、依赖感知子任务派发、重试、最大并发、队列深度限制、启动恢复/过期策略和准入 backpressure，但还没有优先级队列、延迟调度和完整生产队列语义。
 2. **生产隔离仍需加强**：已有工具级策略、审计、命令超时取消、精简环境、网络 host 白名单、可选 cgroup/container sandbox profile，但还没有跨平台系统级网络 namespace、加固容器镜像和集群级策略下发。
-3. **下一阶段重点**：当前明确任务队列已完成；后续优先做优先级队列、生产可观测性、真实 trainer 执行/adapter artifact 生命周期。
+3. **下一阶段重点**：当前明确任务队列已完成；后续进入 N3 产品化版本线，优先做稳定配置文件、数据迁移、发布打包、operator 文档、优先级队列和生产可观测性。
 
 ## 六、当前任务队列
 
@@ -562,28 +564,32 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - embedding：设置 `YIZUTT_EMBEDDING_URL=http://127.0.0.1:<port>/v1/embeddings` 后追加记忆并调用 `search_vector()`
 - LoRA 准备：`PYTHONPATH=python python -m yizutt_agi.training prepare-lora --base-model mistral-7b --output-dir .yizutt/training/lora/latest`
 
-### N2-5 建议任务：优先级队列与生产可观测性
+### N3-0 建议任务：产品化基线
 
-**目标**：在已有准入 backpressure 和持久任务日志基础上，引入优先级队列、延迟/重试调度指标和生产可观测性输出。
+**目标**：从下一版本开始不再只按 demo 验收，而是建立可日常使用的 Runtime 产品基线：稳定配置、数据迁移、发布打包、operator 文档和可观测启动路径。
 
 **建议涉及文件**：
 - `crates/yizutt-runtime/src/main.rs`
 - `proto/yizutt.proto`
 - `python/yizutt_agi/panel.py`
 - `web/panel/index.html`
+- `python/yizutt_agi/config.py`
+- `scripts/`
 - `README.md`
 - `README_CN.md`
 - `CONTEXT.md`
 
 **验收标准**：
-- 任务 context 支持 `priority` 并影响 Worker 派发顺序。
-- Runtime status 暴露 queue depth、priority 分布、backpressure/retry/latency 指标。
-- Web 面板可查看队列指标和最近拒绝原因。
-- 不破坏现有 `submit`、`submit --stream`、`tasks`、恢复和远程 Worker。
+- 提供稳定配置文件，例如 `.yizutt/config.toml` 或 `.yizutt/config.json`，覆盖 runtime、provider、memory、skills、panel、sandbox、remote worker 设置。
+- 提供数据迁移/版本检查机制，启动时能报告 schema/config 版本和迁移状态。
+- 提供产品化启动命令或脚本，真实 provider 与 mock smoke 分离；mock 只作为验收路径。
+- README 和中文说明包含 operator runbook：启动、停止、升级、备份、恢复、日志、故障排查。
+- Runtime status/Web 面板暴露产品化状态摘要：配置来源、数据路径、schema 版本、worker/queue 健康。
+- 不破坏现有本地 mock smoke、`submit`、`submit --stream`、`tasks`、恢复、远程 Worker 和 sandbox profile。
 
 ### 当前任务状态
 
-截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步、N2-3.2 简化本地启动命令、N2-4 生产化隔离/远程 Worker/backpressure/embedding/LoRA 准备均已完成。下一个建议任务是 N2-5：优先级队列与生产可观测性。
+截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步、N2-3.2 简化本地启动命令、N2-4 生产化隔离/远程 Worker/backpressure/embedding/LoRA 准备均已完成。下一版本线从 N3 开始，不再只按 demo 验收；下一个建议任务是 N3-0：产品化基线。
 
 ## 七、常用开发命令
 
