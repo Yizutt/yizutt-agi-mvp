@@ -54,6 +54,26 @@ enum Commands {
         task_timeout_secs: u64,
         #[arg(long, default_value = "3")]
         health_timeout_secs: u64,
+        #[arg(long, default_value = "4")]
+        max_inflight_per_worker: usize,
+        #[arg(long, default_value = "64")]
+        max_runtime_queue_depth: usize,
+        #[arg(long, value_delimiter = ',')]
+        remote_worker: Vec<String>,
+        #[arg(long, default_value = "process")]
+        sandbox_profile: String,
+        #[arg(long, default_value = "")]
+        container_runtime: String,
+        #[arg(long, default_value = "")]
+        container_image: String,
+        #[arg(long, default_value = "/sys/fs/cgroup/yizutt")]
+        cgroup_root: PathBuf,
+        #[arg(long, default_value = "0")]
+        cgroup_memory_max_bytes: u64,
+        #[arg(long, default_value = "0")]
+        cgroup_pids_max: u64,
+        #[arg(long, default_value = "")]
+        cgroup_cpu_max: String,
         #[arg(long, default_value_t = false)]
         resume_incomplete_tasks: bool,
         #[arg(long, default_value_t = false)]
@@ -62,10 +82,16 @@ enum Commands {
     /// Internal worker process. Usually started by `run`.
     #[command(hide = true)]
     Worker {
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: String,
         #[arg(long, default_value = "50100")]
         port: u16,
         #[arg(long, default_value = "worker-dev")]
         id: String,
+        #[arg(long, default_value = "local")]
+        worker_kind: String,
+        #[arg(long, default_value = "process")]
+        sandbox_profile: String,
         #[arg(long, default_value = "120")]
         task_timeout_secs: u64,
         #[arg(long, default_value = "3")]
@@ -108,6 +134,10 @@ struct RuntimeConfig {
     project_root: PathBuf,
     task_timeout_secs: u64,
     health_timeout_secs: u64,
+    max_inflight_per_worker: usize,
+    max_runtime_queue_depth: usize,
+    remote_workers: Vec<String>,
+    sandbox: SandboxConfig,
 }
 
 struct RunOptions {
@@ -118,7 +148,31 @@ struct RunOptions {
     home: PathBuf,
     task_timeout_secs: u64,
     health_timeout_secs: u64,
+    max_inflight_per_worker: usize,
+    max_runtime_queue_depth: usize,
+    remote_workers: Vec<String>,
+    sandbox: SandboxConfig,
     recovery_mode: RecoveryMode,
+}
+
+#[derive(Clone)]
+struct SandboxConfig {
+    profile: String,
+    container_runtime: String,
+    container_image: String,
+    cgroup_root: PathBuf,
+    cgroup_memory_max_bytes: u64,
+    cgroup_pids_max: u64,
+    cgroup_cpu_max: String,
+}
+
+impl SandboxConfig {
+    fn normalized_profile(&self) -> &str {
+        match self.profile.as_str() {
+            "none" | "process" | "cgroup" | "container" => self.profile.as_str(),
+            _ => "process",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -132,17 +186,21 @@ struct WorkerHandle {
     id: String,
     addr: String,
     port: u16,
-    child: Child,
+    child: Option<Child>,
     inflight: usize,
     healthy: bool,
     checked_at: String,
     last_error: String,
+    worker_kind: String,
+    sandbox_profile: String,
+    isolation_status: String,
 }
 
 struct WorkerPool {
     cfg: RuntimeConfig,
     workers: Vec<WorkerHandle>,
     next_port: u16,
+    backpressure_rejections: u64,
 }
 
 impl WorkerPool {
@@ -151,15 +209,45 @@ impl WorkerPool {
             next_port: cfg.worker_base_port,
             cfg,
             workers: Vec::new(),
+            backpressure_rejections: 0,
         };
+        let remote_workers = pool.cfg.remote_workers.clone();
+        for remote in remote_workers {
+            pool.register_remote_worker(remote);
+        }
         for _ in 0..pool.cfg.min_workers {
             pool.spawn_worker().await?;
         }
         Ok(pool)
     }
 
+    fn local_worker_count(&self) -> usize {
+        self.workers.iter().filter(|w| w.child.is_some()).count()
+    }
+
+    fn register_remote_worker(&mut self, addr: String) {
+        let normalized_addr = if addr.starts_with("http://") || addr.starts_with("https://") {
+            addr
+        } else {
+            format!("http://{addr}")
+        };
+        self.workers.push(WorkerHandle {
+            id: format!("remote-{}", Uuid::new_v4()),
+            addr: normalized_addr,
+            port: 0,
+            child: None,
+            inflight: 0,
+            healthy: true,
+            checked_at: Utc::now().to_rfc3339(),
+            last_error: String::new(),
+            worker_kind: "remote".to_string(),
+            sandbox_profile: "remote-managed".to_string(),
+            isolation_status: "remote worker is managed outside this runtime".to_string(),
+        });
+    }
+
     async fn spawn_worker(&mut self) -> Result<()> {
-        if self.workers.len() >= self.cfg.max_workers {
+        if self.local_worker_count() >= self.cfg.max_workers {
             return Ok(());
         }
         let id = format!("worker-{}", Uuid::new_v4());
@@ -168,44 +256,30 @@ impl WorkerPool {
         let addr = format!("http://127.0.0.1:{port}");
         let worker_dir = self.cfg.home.join("workers").join(&id);
         fs::create_dir_all(&worker_dir)?;
-        let exe = env::current_exe()?;
-        let child = Command::new(exe)
-            .arg("worker")
-            .arg("--port")
-            .arg(port.to_string())
-            .arg("--id")
-            .arg(&id)
-            .arg("--task-timeout-secs")
-            .arg(self.cfg.task_timeout_secs.to_string())
-            .arg("--health-timeout-secs")
-            .arg(self.cfg.health_timeout_secs.to_string())
-            .current_dir(&worker_dir)
-            .env("YIZUTT_WORKER_DIR", &worker_dir)
-            .env("YIZUTT_PROJECT_ROOT", &self.cfg.project_root)
-            .env(
-                "YIZUTT_MEMORY_PATH",
-                self.cfg.project_root.join(".yizutt/memory/work.sqlite3"),
-            )
-            .env(
-                "YIZUTT_SKILLS_ROOT",
-                self.cfg.project_root.join(".yizutt/skills"),
-            )
-            .env("PYTHONPATH", python_path(&self.cfg.project_root))
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .with_context(|| format!("spawn {id}"))?;
+        let (mut child, mut isolation_status) = spawn_local_worker_process(
+            &self.cfg,
+            &id,
+            port,
+            &worker_dir,
+            self.cfg.sandbox.normalized_profile(),
+        )
+        .await?;
+        if self.cfg.sandbox.normalized_profile() == "cgroup" {
+            isolation_status = apply_cgroup_limits(&mut child, &self.cfg.sandbox, &id)?;
+        }
         sleep(Duration::from_millis(250)).await;
         self.workers.push(WorkerHandle {
             id,
             addr,
             port,
-            child,
+            child: Some(child),
             inflight: 0,
             healthy: true,
             checked_at: Utc::now().to_rfc3339(),
             last_error: String::new(),
+            worker_kind: "local".to_string(),
+            sandbox_profile: self.cfg.sandbox.normalized_profile().to_string(),
+            isolation_status,
         });
         Ok(())
     }
@@ -215,24 +289,45 @@ impl WorkerPool {
             self.spawn_worker().await?;
         }
         self.probe_all().await;
-        if !self.workers.iter().any(|w| w.healthy) && self.workers.len() < self.cfg.max_workers {
+        let total_inflight = self.workers.iter().map(|w| w.inflight).sum::<usize>();
+        if total_inflight >= self.cfg.max_runtime_queue_depth {
+            self.backpressure_rejections = self.backpressure_rejections.saturating_add(1);
+            return Err(anyhow!(
+                "runtime backpressure: max_runtime_queue_depth={} reached",
+                self.cfg.max_runtime_queue_depth
+            ));
+        }
+        if !self.workers.iter().any(|w| w.healthy)
+            && self.local_worker_count() < self.cfg.max_workers
+        {
             self.spawn_worker().await?;
         }
-        let all_busy = self
+        let all_at_capacity = self
             .workers
             .iter()
             .filter(|w| w.healthy)
-            .all(|w| w.inflight > 0);
-        if all_busy && self.workers.len() < self.cfg.max_workers {
+            .all(|w| w.inflight >= self.cfg.max_inflight_per_worker);
+        if all_at_capacity && self.local_worker_count() < self.cfg.max_workers {
             self.spawn_worker().await?;
         }
-        self.workers
+        if let Some((idx, _)) = self
+            .workers
             .iter()
             .enumerate()
-            .filter(|(_, w)| w.healthy)
+            .filter(|(_, w)| w.healthy && w.inflight < self.cfg.max_inflight_per_worker)
             .min_by_key(|(_, w)| w.inflight)
-            .map(|(idx, _)| idx)
-            .ok_or_else(|| anyhow!("no healthy workers"))
+        {
+            return Ok(idx);
+        }
+        if self.workers.iter().any(|w| w.healthy) {
+            self.backpressure_rejections = self.backpressure_rejections.saturating_add(1);
+            Err(anyhow!(
+                "runtime backpressure: max_inflight_per_worker={} reached",
+                self.cfg.max_inflight_per_worker
+            ))
+        } else {
+            Err(anyhow!("no healthy workers"))
+        }
     }
 
     fn snapshots(&self) -> Vec<WorkerSnapshot> {
@@ -245,6 +340,9 @@ impl WorkerPool {
                 healthy: w.healthy,
                 checked_at: w.checked_at.clone(),
                 last_error: w.last_error.clone(),
+                worker_kind: w.worker_kind.clone(),
+                sandbox_profile: w.sandbox_profile.clone(),
+                isolation_status: w.isolation_status.clone(),
             })
             .collect()
     }
@@ -254,7 +352,9 @@ impl WorkerPool {
             w.healthy = false;
             w.checked_at = Utc::now().to_rfc3339();
             w.last_error = reason.to_string();
-            let _ = w.child.kill().await;
+            if let Some(child) = &mut w.child {
+                let _ = child.kill().await;
+            }
             warn!(worker_id, port = w.port, reason, "worker marked unhealthy");
         }
     }
@@ -269,21 +369,23 @@ impl WorkerPool {
         for (idx, worker_id, addr) in probes {
             let checked_at = Utc::now().to_rfc3339();
             if let Some(worker) = self.workers.get_mut(idx) {
-                match worker.child.try_wait() {
-                    Ok(Some(status)) => {
-                        worker.healthy = false;
-                        worker.checked_at = checked_at;
-                        worker.last_error = format!("worker process exited with {status}");
-                        warn!(worker_id = %worker.id, port = worker.port, "worker process exited before health probe");
-                        continue;
-                    }
-                    Ok(None) => {}
-                    Err(err) => {
-                        worker.healthy = false;
-                        worker.checked_at = checked_at;
-                        worker.last_error = format!("worker process check failed: {err}");
-                        warn!(worker_id = %worker.id, port = worker.port, error = %err, "worker process check failed");
-                        continue;
+                if let Some(child) = &mut worker.child {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            worker.healthy = false;
+                            worker.checked_at = checked_at;
+                            worker.last_error = format!("worker process exited with {status}");
+                            warn!(worker_id = %worker.id, port = worker.port, "worker process exited before health probe");
+                            continue;
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            worker.healthy = false;
+                            worker.checked_at = checked_at;
+                            worker.last_error = format!("worker process check failed: {err}");
+                            warn!(worker_id = %worker.id, port = worker.port, error = %err, "worker process check failed");
+                            continue;
+                        }
                     }
                 }
             }
@@ -298,6 +400,17 @@ impl WorkerPool {
                             health.checked_at
                         };
                         worker.last_error = health.last_error;
+                        if !health.worker_kind.is_empty() {
+                            worker.worker_kind = health.worker_kind;
+                        }
+                        if !health.sandbox_profile.is_empty() {
+                            worker.sandbox_profile = health.sandbox_profile;
+                        }
+                        if !health.isolation_status.is_empty()
+                            && (worker.child.is_none() || worker.isolation_status.is_empty())
+                        {
+                            worker.isolation_status = health.isolation_status;
+                        }
                     }
                 }
                 Err(err) => {
@@ -311,6 +424,211 @@ impl WorkerPool {
             }
         }
     }
+}
+
+async fn spawn_local_worker_process(
+    cfg: &RuntimeConfig,
+    id: &str,
+    port: u16,
+    worker_dir: &Path,
+    sandbox_profile: &str,
+) -> Result<(Child, String)> {
+    match sandbox_profile {
+        "container" => spawn_container_worker(cfg, id, port, worker_dir).await,
+        "none" | "process" | "cgroup" => {
+            spawn_process_worker(cfg, id, port, worker_dir, sandbox_profile).await
+        }
+        other => Err(anyhow!("unsupported sandbox profile: {other}")),
+    }
+}
+
+async fn spawn_process_worker(
+    cfg: &RuntimeConfig,
+    id: &str,
+    port: u16,
+    worker_dir: &Path,
+    sandbox_profile: &str,
+) -> Result<(Child, String)> {
+    let exe = env::current_exe()?;
+    let mut command = Command::new(exe);
+    let child = base_worker_command(
+        &mut command,
+        cfg,
+        id,
+        port,
+        worker_dir,
+        "local",
+        sandbox_profile,
+    )
+    .current_dir(worker_dir)
+    .spawn()
+    .with_context(|| format!("spawn {id}"))?;
+    let status = match sandbox_profile {
+        "none" => "no worker sandbox requested".to_string(),
+        "cgroup" => "process sandbox active; cgroup attachment pending".to_string(),
+        _ => "process sandbox active: isolated worker directory and sanitized runtime environment"
+            .to_string(),
+    };
+    Ok((child, status))
+}
+
+async fn spawn_container_worker(
+    cfg: &RuntimeConfig,
+    id: &str,
+    port: u16,
+    worker_dir: &Path,
+) -> Result<(Child, String)> {
+    if cfg.sandbox.container_runtime.trim().is_empty() {
+        return Err(anyhow!(
+            "container sandbox requested but --container-runtime was not provided"
+        ));
+    }
+    if cfg.sandbox.container_image.trim().is_empty() {
+        return Err(anyhow!(
+            "container sandbox requested but --container-image was not provided"
+        ));
+    }
+    let exe = env::current_exe()?;
+    let container_exe = exe
+        .strip_prefix(&cfg.project_root)
+        .map(|relative| Path::new("/workspace").join(relative))
+        .unwrap_or_else(|_| Path::new("/workspace/target/debug/yizutt-runtime").to_path_buf());
+    let container_worker_dir = worker_dir
+        .strip_prefix(&cfg.project_root)
+        .map(|relative| Path::new("/workspace").join(relative))
+        .unwrap_or_else(|_| Path::new("/workspace/.yizutt/runtime/workers").join(id));
+    let mut command = Command::new(&cfg.sandbox.container_runtime);
+    command
+        .arg("run")
+        .arg("--rm")
+        .arg("--name")
+        .arg(format!("yizutt-{id}"))
+        .arg("-p")
+        .arg(format!("127.0.0.1:{port}:{port}"))
+        .arg("-v")
+        .arg(format!("{}:/workspace", cfg.project_root.display()))
+        .arg("-w")
+        .arg("/workspace")
+        .arg("-e")
+        .arg(format!(
+            "YIZUTT_WORKER_DIR={}",
+            container_worker_dir.display()
+        ))
+        .arg("-e")
+        .arg("YIZUTT_PROJECT_ROOT=/workspace")
+        .arg("-e")
+        .arg("YIZUTT_MEMORY_PATH=/workspace/.yizutt/memory/work.sqlite3")
+        .arg("-e")
+        .arg("YIZUTT_SKILLS_ROOT=/workspace/.yizutt/skills")
+        .arg("-e")
+        .arg("PYTHONPATH=/workspace/python")
+        .arg(&cfg.sandbox.container_image)
+        .arg(container_exe)
+        .arg("worker")
+        .arg("--bind")
+        .arg("0.0.0.0")
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--id")
+        .arg(id)
+        .arg("--worker-kind")
+        .arg("container")
+        .arg("--sandbox-profile")
+        .arg("container")
+        .arg("--task-timeout-secs")
+        .arg(cfg.task_timeout_secs.to_string())
+        .arg("--health-timeout-secs")
+        .arg(cfg.health_timeout_secs.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    let child = command
+        .spawn()
+        .with_context(|| format!("spawn container worker {id}"))?;
+    Ok((
+        child,
+        format!(
+            "container sandbox active: runtime={} image={}",
+            cfg.sandbox.container_runtime, cfg.sandbox.container_image
+        ),
+    ))
+}
+
+fn base_worker_command<'a>(
+    command: &'a mut Command,
+    cfg: &RuntimeConfig,
+    id: &str,
+    port: u16,
+    worker_dir: &Path,
+    worker_kind: &str,
+    sandbox_profile: &str,
+) -> &'a mut Command {
+    command
+        .arg("worker")
+        .arg("--bind")
+        .arg("127.0.0.1")
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--id")
+        .arg(id)
+        .arg("--worker-kind")
+        .arg(worker_kind)
+        .arg("--sandbox-profile")
+        .arg(sandbox_profile)
+        .arg("--task-timeout-secs")
+        .arg(cfg.task_timeout_secs.to_string())
+        .arg("--health-timeout-secs")
+        .arg(cfg.health_timeout_secs.to_string())
+        .env("YIZUTT_WORKER_DIR", worker_dir)
+        .env("YIZUTT_PROJECT_ROOT", &cfg.project_root)
+        .env(
+            "YIZUTT_MEMORY_PATH",
+            cfg.project_root.join(".yizutt/memory/work.sqlite3"),
+        )
+        .env(
+            "YIZUTT_SKILLS_ROOT",
+            cfg.project_root.join(".yizutt/skills"),
+        )
+        .env("PYTHONPATH", python_path(&cfg.project_root))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+}
+
+fn apply_cgroup_limits(child: &mut Child, sandbox: &SandboxConfig, id: &str) -> Result<String> {
+    let pid = child
+        .id()
+        .ok_or_else(|| anyhow!("worker process id is not available for cgroup attachment"))?;
+    let cgroup_dir = sandbox.cgroup_root.join(id);
+    fs::create_dir_all(&cgroup_dir).with_context(|| {
+        format!(
+            "create cgroup directory {}; cgroup v2 may be unavailable",
+            cgroup_dir.display()
+        )
+    })?;
+    if sandbox.cgroup_memory_max_bytes > 0 {
+        fs::write(
+            cgroup_dir.join("memory.max"),
+            sandbox.cgroup_memory_max_bytes.to_string(),
+        )
+        .with_context(|| "write cgroup memory.max")?;
+    }
+    if sandbox.cgroup_pids_max > 0 {
+        fs::write(
+            cgroup_dir.join("pids.max"),
+            sandbox.cgroup_pids_max.to_string(),
+        )
+        .with_context(|| "write cgroup pids.max")?;
+    }
+    if !sandbox.cgroup_cpu_max.trim().is_empty() {
+        fs::write(cgroup_dir.join("cpu.max"), sandbox.cgroup_cpu_max.trim())
+            .with_context(|| "write cgroup cpu.max")?;
+    }
+    fs::write(cgroup_dir.join("cgroup.procs"), pid.to_string())
+        .with_context(|| "attach worker pid to cgroup.procs")?;
+    Ok(format!("cgroup sandbox active: {}", cgroup_dir.display()))
 }
 
 #[derive(Clone)]
@@ -517,15 +835,44 @@ impl RuntimeService for RuntimeServer {
             .build(),
         )
         .await;
-        let (idx, addr, worker_id) = {
+        let chosen = {
             let mut pool = self.pool.lock().await;
-            let idx = pool.choose_worker().await.map_err(anyhow_to_status)?;
-            pool.workers[idx].inflight += 1;
-            (
-                idx,
-                pool.workers[idx].addr.clone(),
-                pool.workers[idx].id.clone(),
-            )
+            match pool.choose_worker().await {
+                Ok(idx) => {
+                    pool.workers[idx].inflight += 1;
+                    Ok((
+                        idx,
+                        pool.workers[idx].addr.clone(),
+                        pool.workers[idx].id.clone(),
+                    ))
+                }
+                Err(err) => Err(err),
+            }
+        };
+        let (idx, addr, worker_id) = match chosen {
+            Ok(chosen) => chosen,
+            Err(err) => {
+                let status = if err.to_string().contains("backpressure") {
+                    "queue_rejected"
+                } else {
+                    "error"
+                };
+                let message = err.to_string();
+                append_task_log(
+                    self.task_log.clone(),
+                    TaskLogRecordDraft::new(
+                        runtime_task_id,
+                        String::new(),
+                        "task_stream",
+                        &task,
+                        status,
+                    )
+                    .output(message.clone(), status.to_string())
+                    .build(),
+                )
+                .await;
+                return Err(anyhow_to_status(anyhow!(message)));
+            }
         };
         let pool = self.pool.clone();
         let task_log = self.task_log.clone();
@@ -626,10 +973,15 @@ impl RuntimeService for RuntimeServer {
     ) -> std::result::Result<Response<PoolStatusReply>, Status> {
         let mut pool = self.pool.lock().await;
         pool.probe_all().await;
+        let current_inflight = pool.workers.iter().map(|w| w.inflight).sum::<usize>();
         Ok(Response::new(PoolStatusReply {
             workers: pool.snapshots(),
             min_workers: self.min_workers as u32,
             max_workers: self.max_workers as u32,
+            max_inflight_per_worker: pool.cfg.max_inflight_per_worker as u32,
+            max_runtime_queue_depth: pool.cfg.max_runtime_queue_depth as u32,
+            current_inflight: current_inflight as u32,
+            backpressure_rejections: pool.backpressure_rejections,
         }))
     }
 }
@@ -637,6 +989,8 @@ impl RuntimeService for RuntimeServer {
 #[derive(Clone)]
 struct WorkerServer {
     id: String,
+    worker_kind: String,
+    sandbox_profile: String,
     task_timeout_secs: u64,
     health_timeout_secs: u64,
 }
@@ -707,12 +1061,23 @@ impl WorkerService for WorkerServer {
             inflight: 0,
             checked_at,
             last_error,
+            worker_kind: self.worker_kind.clone(),
+            sandbox_profile: self.sandbox_profile.clone(),
+            isolation_status: format!(
+                "worker self-reported sandbox profile {}",
+                self.sandbox_profile
+            ),
         }))
     }
 }
 
 fn anyhow_to_status(err: anyhow::Error) -> Status {
-    Status::internal(err.to_string())
+    let message = err.to_string();
+    if message.contains("backpressure") {
+        Status::resource_exhausted(message)
+    } else {
+        Status::internal(message)
+    }
 }
 
 async fn execute_top_level_task(
@@ -787,15 +1152,38 @@ async fn dispatch_runtime_task(
     kind: &str,
     task: TaskRequest,
 ) -> std::result::Result<TaskReply, Status> {
-    let (idx, addr, worker_id) = {
+    let chosen = {
         let mut pool = pool.lock().await;
-        let idx = pool.choose_worker().await.map_err(anyhow_to_status)?;
-        pool.workers[idx].inflight += 1;
-        (
-            idx,
-            pool.workers[idx].addr.clone(),
-            pool.workers[idx].id.clone(),
-        )
+        match pool.choose_worker().await {
+            Ok(idx) => {
+                pool.workers[idx].inflight += 1;
+                Ok((
+                    idx,
+                    pool.workers[idx].addr.clone(),
+                    pool.workers[idx].id.clone(),
+                ))
+            }
+            Err(err) => Err(err),
+        }
+    };
+    let (idx, addr, worker_id) = match chosen {
+        Ok(chosen) => chosen,
+        Err(err) => {
+            let status = if err.to_string().contains("backpressure") {
+                "queue_rejected"
+            } else {
+                "error"
+            };
+            let message = err.to_string();
+            append_task_log(
+                task_log,
+                TaskLogRecordDraft::new(runtime_task_id, parent_task_id, kind, &task, status)
+                    .output(message.clone(), status.to_string())
+                    .build(),
+            )
+            .await;
+            return Err(anyhow_to_status(anyhow!(message)));
+        }
     };
     append_task_log(
         task_log.clone(),
@@ -1549,16 +1937,21 @@ async fn probe_worker_health(addr: String, timeout_secs: u64) -> Result<WorkerHe
 }
 
 async fn run_worker(
+    bind: String,
     port: u16,
     id: String,
+    worker_kind: String,
+    sandbox_profile: String,
     task_timeout_secs: u64,
     health_timeout_secs: u64,
 ) -> Result<()> {
-    let addr: SocketAddr = format!("127.0.0.1:{port}").parse()?;
+    let addr: SocketAddr = format!("{bind}:{port}").parse()?;
     info!(%id, %addr, "worker listening");
     Server::builder()
         .add_service(WorkerServiceServer::new(WorkerServer {
             id,
+            worker_kind,
+            sandbox_profile,
             task_timeout_secs,
             health_timeout_secs,
         }))
@@ -1659,6 +2052,10 @@ async fn run_runtime(options: RunOptions) -> Result<()> {
         project_root: env::current_dir()?,
         task_timeout_secs: options.task_timeout_secs,
         health_timeout_secs: options.health_timeout_secs,
+        max_inflight_per_worker: options.max_inflight_per_worker.max(1),
+        max_runtime_queue_depth: options.max_runtime_queue_depth.max(1),
+        remote_workers: options.remote_workers,
+        sandbox: options.sandbox,
     };
     let pool = Arc::new(Mutex::new(WorkerPool::new(cfg.clone()).await?));
     let task_log = Arc::new(Mutex::new(TaskLog::new(cfg.home.join("tasks.jsonl"))?));
@@ -1746,25 +2143,33 @@ async fn run_status(addr: String) -> Result<()> {
         .pool_status(Request::new(Empty {}))
         .await?
         .into_inner();
-    println!(
-        "{}",
-        serde_json::to_string_pretty(
-            &reply
-                .workers
-                .iter()
-                .map(|w| {
-                    json!({
-                        "worker_id": w.worker_id,
-                        "address": w.address,
-                        "inflight": w.inflight,
-                        "healthy": w.healthy,
-                        "checked_at": w.checked_at,
-                        "last_error": w.last_error
-                    })
-                })
-                .collect::<Vec<_>>()
-        )?
-    );
+    let workers = reply
+        .workers
+        .iter()
+        .map(|w| {
+            json!({
+                "worker_id": w.worker_id,
+                "address": w.address,
+                "inflight": w.inflight,
+                "healthy": w.healthy,
+                "checked_at": w.checked_at,
+                "last_error": w.last_error,
+                "worker_kind": w.worker_kind,
+                "sandbox_profile": w.sandbox_profile,
+                "isolation_status": w.isolation_status
+            })
+        })
+        .collect::<Vec<_>>();
+    let payload = json!({
+        "workers": workers,
+        "min_workers": reply.min_workers,
+        "max_workers": reply.max_workers,
+        "max_inflight_per_worker": reply.max_inflight_per_worker,
+        "max_runtime_queue_depth": reply.max_runtime_queue_depth,
+        "current_inflight": reply.current_inflight,
+        "backpressure_rejections": reply.backpressure_rejections
+    });
+    println!("{}", serde_json::to_string_pretty(&payload)?);
     Ok(())
 }
 
@@ -1797,6 +2202,16 @@ async fn main() -> Result<()> {
             home,
             task_timeout_secs,
             health_timeout_secs,
+            max_inflight_per_worker,
+            max_runtime_queue_depth,
+            remote_worker,
+            sandbox_profile,
+            container_runtime,
+            container_image,
+            cgroup_root,
+            cgroup_memory_max_bytes,
+            cgroup_pids_max,
+            cgroup_cpu_max,
             resume_incomplete_tasks,
             expire_incomplete_tasks,
         } => {
@@ -1820,16 +2235,42 @@ async fn main() -> Result<()> {
                 home,
                 task_timeout_secs,
                 health_timeout_secs,
+                max_inflight_per_worker,
+                max_runtime_queue_depth,
+                remote_workers: remote_worker,
+                sandbox: SandboxConfig {
+                    profile: sandbox_profile,
+                    container_runtime,
+                    container_image,
+                    cgroup_root,
+                    cgroup_memory_max_bytes,
+                    cgroup_pids_max,
+                    cgroup_cpu_max,
+                },
                 recovery_mode,
             })
             .await
         }
         Commands::Worker {
+            bind,
             port,
             id,
+            worker_kind,
+            sandbox_profile,
             task_timeout_secs,
             health_timeout_secs,
-        } => run_worker(port, id, task_timeout_secs, health_timeout_secs).await,
+        } => {
+            run_worker(
+                bind,
+                port,
+                id,
+                worker_kind,
+                sandbox_profile,
+                task_timeout_secs,
+                health_timeout_secs,
+            )
+            .await
+        }
         Commands::Submit {
             addr,
             task,

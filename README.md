@@ -12,13 +12,13 @@ This repository is intentionally small. Its goal is to prove the core loop:
 
 - Rust runtime with local gRPC services for task submission and worker status.
 - Server-streaming trace API for observing task events while a worker is running.
-- WorkerPool with basic dynamic scale-up and active worker/sidecar health checks.
+- WorkerPool with dynamic scale-up, active worker/sidecar health checks, remote worker registration, admission backpressure, and explicit sandbox profiles.
 - `clap` based CLI with explicit `run`, `submit`, and `status` commands.
 - Durable Runtime task log with `tasks` status lookup and parallel subtask dispatch for saved plans.
 - Python TaskExecutor sidecar launched by Rust workers for real task execution.
 - Model gateway adapters for OpenAI, Anthropic, OpenAI-compatible local proxies, and a placeholder local endpoint.
-- SQLite FTS5 working memory with tokenized search, ranked graph reasoning context, and sparse vector recall.
-- Training data buffer that scores successful traces for future fine-tuning datasets without starting training jobs.
+- SQLite FTS5 working memory with tokenized search, ranked graph reasoning context, sparse vector recall, and optional OpenAI-compatible dense embeddings.
+- Training data buffer that scores successful traces and can prepare LoRA-ready JSONL job artifacts.
 - Skill persistence as `SKILL.md` files with draft, replay-check, and active states.
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
 - Local Web panel for Runtime status, Runtime queue status, task submission with streaming trace output, persistent task history replay, recent memory, skill summaries, and language switching.
@@ -36,6 +36,7 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - `python/yizutt_agi/executor.py` is the Python sidecar used by Rust workers.
 - `python/yizutt_agi/model_gateway.py` provides one model gateway interface.
 - `python/yizutt_agi/memory.py` stores cross-session working memory in SQLite FTS5 plus graph and vector memory tables.
+- `python/yizutt_agi/training.py` exports accepted training examples into LoRA preparation artifacts.
 - `python/yizutt_agi/skills.py` stores reusable skills as `SKILL.md` files.
 - `python/yizutt_agi/i18n.py` resolves global language short codes, environment defaults, and CLI entrypoint suffixes.
 - `python/yizutt_agi/panel.py` serves the local Web panel, proxies panel API calls to the runtime CLI, stores panel task history, and bridges streaming task output over SSE.
@@ -97,6 +98,18 @@ Check persisted Runtime task status:
 `target/debug/yizutt-runtime tasks --home .yizutt/runtime --limit 20`
 
 Runtime startup can explicitly recover unfinished log records. Use `--expire-incomplete-tasks` to mark queued/running records as `expired_on_startup`, or `--resume-incomplete-tasks` to re-dispatch them with the stored task and context. The two flags are mutually exclusive and both write new audit records to `tasks.jsonl`.
+
+Production-oriented runtime controls are opt-in. Local process sandboxing remains the default; cgroup and container profiles fail clearly when the host does not support them.
+
+`target/debug/yizutt-runtime run --sandbox-profile cgroup --cgroup-memory-max-bytes 536870912 --cgroup-pids-max 128 --max-inflight-per-worker 2 --max-runtime-queue-depth 32`
+
+`target/debug/yizutt-runtime run --sandbox-profile container --container-runtime podman --container-image yizutt-runtime:latest`
+
+Remote workers can be started separately and registered with the runtime:
+
+`target/debug/yizutt-runtime worker --bind 0.0.0.0 --port 50210 --id remote-a`
+
+`target/debug/yizutt-runtime run --remote-worker http://127.0.0.1:50210 --min-workers 0`
 
 Start the local Web panel:
 
@@ -224,7 +237,9 @@ Quick check:
 
 ## Vector Memory
 
-`memory_vectors` stores a lightweight sparse token vector for every message. `search_vector(query)` performs cosine similarity over persisted vectors, and `vector_context(query)` formats the best matches for prompt injection. This is a dependency-free local backend intended to keep the MVP portable; FAISS or usearch can replace the storage/search backend later without changing the high-level API.
+`memory_vectors` stores a lightweight sparse token vector for every message. `search_vector(query)` performs cosine similarity over persisted vectors, and `vector_context(query)` formats the best matches for prompt injection. This dependency-free backend is the default fallback.
+
+Set `YIZUTT_EMBEDDING_URL` to an OpenAI-compatible embeddings endpoint to store dense model embeddings in `memory_embeddings`; `search_vector()` automatically prefers matching dense embeddings when available.
 
 Quick check:
 
@@ -232,7 +247,11 @@ Quick check:
 
 ## Training Buffer
 
-Successful execution paths are copied into a SQLite `training_examples` buffer with a simple quality score and acceptance flag. The score rewards substantive answers, model metadata, timing, and recorded tool or orchestration structure. This only collects future fine-tuning candidates; it does not start LoRA or any other training job.
+Successful execution paths are copied into a SQLite `training_examples` buffer with a simple quality score and acceptance flag. The score rewards substantive answers, model metadata, timing, and recorded tool or orchestration structure.
+
+Prepare a LoRA-ready dataset and job manifest from accepted examples:
+
+`PYTHONPATH=python python -m yizutt_agi.training prepare-lora --base-model mistral-7b --output-dir .yizutt/training/lora/latest`
 
 Quick check:
 
@@ -292,6 +311,7 @@ Deep local validation was last run on May 9, 2026 with:
 - `PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
 - Python behavior assertions for tool policy, command timeout cancellation, network denial, graph/vector memory, and skill ranking
 - Local mock-model integration covering Runtime status, unary submit, streaming submit, persisted `tasks` lookup, Web panel config/history/runtime-task APIs, and startup `--expire-incomplete-tasks` / `--resume-incomplete-tasks`
+- Runtime backpressure/status checks, remote worker CLI surface, dense embedding mock endpoint, and LoRA preparation artifact export
 
 The current prototype has been run locally with:
 
@@ -310,6 +330,7 @@ The current prototype has been run locally with:
 - Durable Runtime `tasks.jsonl` queue status plus parallel subtask dispatch from `plan_created`
 - Dependency-aware subtask waves, retry attempts, max concurrency, and queue-depth rejection
 - Startup recovery for incomplete Runtime task records with explicit resume or expire modes
+- Runtime cgroup/container sandbox profiles, remote worker registration, and admission backpressure
 - Leader/Orchestrator `plan_created` trace generation for a complex task
 - Tool loop execution with `read_file` returning the first README heading
 - Tool policy denial for hidden paths, writes, and commands, plus allowlisted command execution
@@ -324,12 +345,13 @@ The current prototype has been run locally with:
 - SQLite graph memory extraction and cross-session graph lookup
 - Ranked graph reasoning context with one-hop related facts
 - Sparse vector memory write, search, and prompt context formatting
+- OpenAI-compatible dense embedding storage and vector search preference
 - Ranked skill search and workflow composition based on skill step content
-- Training example scoring and accepted-only buffer lookup
+- Training example scoring, accepted-only buffer lookup, and LoRA dataset/job manifest preparation
 
 ## MVP Boundaries
 
-This is not a production agent runtime yet. Worker sandboxes are local child processes with separate working directories. The WorkerPool performs basic dynamic scale-up but does not yet implement cgroups, containers, remote workers, priority queues, long-running tool execution controls, LoRA training jobs, embedding-model semantic vectors, or production-grade backpressure.
+This is not a fully managed production agent runtime yet. It now has opt-in cgroup/container sandbox profiles, remote worker registration, admission backpressure, dense embedding storage, and LoRA job preparation. Remaining production gaps include priority queues, cluster scheduling, hardened container images, system-level network namespaces on every platform, actual trainer execution/adaptor artifact lifecycle, and production observability.
 
 ## Roadmap
 

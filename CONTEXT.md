@@ -9,7 +9,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 ## 二、已完成的核心特性
 
 - **项目更名**：对外项目名已从旧名称迁移为 Yizutt AGI。
-- **Rust Runtime & WorkerPool**：基于 gRPC 的异步任务调度，支持动态扩容、主动健康检查和健康标记。
+- **Rust Runtime & WorkerPool**：基于 gRPC 的异步任务调度，支持动态扩容、主动健康检查、健康标记、远程 Worker 注册、准入 backpressure 和显式 sandbox profile。
 - **CLI 入口重写**：使用 `clap` 实现了 `run`、`submit`、`status` 子命令。
 - **持久任务队列**：Runtime 将父任务和子任务状态追加写入 `.yizutt/runtime/tasks.jsonl`，CLI `tasks` 可在 Runtime 重启后查看最近任务状态；启动时可显式恢复未完成任务或标记为过期。
 - **Sidecar 执行通路**：Rust Worker 启动 Python 子进程执行任务，通信通过标准输出 JSON 轨迹。
@@ -28,8 +28,8 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **深度验证基线**：2026-05-09 本地通过 `cargo fmt --check`、`cargo check`、`cargo clippy -D warnings`、`cargo test`、`cargo build`、Python 编译/行为断言、mock Runtime 集成、面板 API smoke 和启动恢复验证。
 - **端到端本地 Mock Demo**：`examples/local_mock_model.py` 可提供无 API key 的确定性模型端点，README 已给出 Runtime、工具调用、记忆查询和技能生成的完整流程。
 - **SQLite Graph Memory**：`memory.py` 在 FTS5 之外增加实体/关系表，自动抽取简单用户偏好、项目技术事实和 requires/improves 关系，支持带分数的跨会话图谱查询、一跳关联推理上下文，并向 executor/real_loop 注入图谱上下文。
-- **稀疏向量记忆**：`memory.py` 为每条消息持久化 `memory_vectors` 稀疏 token 向量，支持 cosine 相似检索，并向 executor/real_loop 注入 vector context。
-- **训练数据缓冲区**：成功执行轨迹会进入 SQLite `training_examples` 表，按简单质量规则评分并标记 accepted，为未来微调准备数据但不自动训练。
+- **向量/Embedding 记忆**：`memory.py` 为每条消息持久化 `memory_vectors` 稀疏 token 向量；配置 `YIZUTT_EMBEDDING_URL` 后会写入 OpenAI-compatible dense embedding 到 `memory_embeddings`，并优先用于相似检索。
+- **训练数据与 LoRA 准备**：成功执行轨迹会进入 SQLite `training_examples` 表，按简单质量规则评分并标记 accepted；`python -m yizutt_agi.training prepare-lora` 可导出 LoRA-ready JSONL dataset 和 job manifest。
 - **gRPC 流式 Trace API**：`proto/yizutt.proto` 和 Runtime/Worker 已支持 `SubmitStream`/`ExecuteStream`，CLI 可用 `submit --stream` 实时输出事件，普通 `submit` 保持兼容。
 - **MCP stdio 工具接入**：新增 `mcp_client.py` 和受控 `mcp_call` 工具，默认拒绝，只有 `allow_mcp=true` 且显式配置 `mcp_servers` 时才可调用。
 - **技能包安装器**：新增 `skill_market.py`、`yizutt` Python 入口和 `examples/skills/echo-skill` 包格式示例，支持从本地路径或 URL 安装技能。
@@ -40,11 +40,12 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 | 模块 | 路径 | 职责 |
 |------|------|------|
-| Rust Runtime 主程序 | `crates/yizutt-runtime/src/main.rs` | WorkerPool 管理、主动健康探测、持久任务日志、启动恢复、并行子任务派发、gRPC 服务启动、Sidecar 子进程拉起 |
+| Rust Runtime 主程序 | `crates/yizutt-runtime/src/main.rs` | WorkerPool 管理、主动健康探测、持久任务日志、启动恢复、并行子任务派发、远程 Worker、backpressure、sandbox profile、gRPC 服务启动 |
 | Protobuf 定义 | `proto/yizutt.proto` | 定义 RuntimeService、WorkerService 和健康检查字段 |
 | Python 执行器 | `python/yizutt_agi/executor.py` | 被 Worker 调用的入口，负责模型调用、工具循环、基础沙箱策略、最小任务分解、写记忆、存技能 |
 | 模型网关 | `python/yizutt_agi/model_gateway.py` | 多厂商 API 统一调用，启发式路由 |
-| 工作记忆 | `python/yizutt_agi/memory.py` | SQLite + FTS5 双索引、图谱推理和向量记忆存储与检索 |
+| 工作记忆 | `python/yizutt_agi/memory.py` | SQLite + FTS5 双索引、图谱推理、稀疏向量和 OpenAI-compatible dense embedding 存储与检索 |
+| 训练任务准备 | `python/yizutt_agi/training.py` | 从 accepted training examples 导出 LoRA-ready dataset 和 job manifest |
 | 技能存储 | `python/yizutt_agi/skills.py` | 技能文件的保存、加载、质量验证和加权召回 |
 | 语言解析 | `python/yizutt_agi/i18n.py` | 统一解析 `cnzh` 等语言短码、环境变量和 CLI 入口后缀 |
 | 本地面板服务 | `python/yizutt_agi/panel.py` | 提供 HTTP 面板 API，代理 Runtime CLI，保存任务历史，读取 Runtime 队列、记忆和技能摘要，并用 SSE 桥接流式任务输出 |
@@ -55,7 +56,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 ## 四、架构决策
 
 - **Rust 负责性能敏感层**（调度、隔离、通信），**Python 负责灵活层**（模型调用、工具、记忆、技能）。
-- **Worker 隔离机制**：每个 Worker 是独立子进程，有独立工作目录 `.yizutt/runtime/workers/<id>/`；Runtime 任务状态以 append-only JSONL 写入 `.yizutt/runtime/tasks.jsonl`，启动恢复同样通过追加日志记录审计。
+- **Worker 隔离机制**：每个本地 Worker 是独立子进程，有独立工作目录 `.yizutt/runtime/workers/<id>/`；可显式开启 `process`、`cgroup` 或 `container` sandbox profile；远程 Worker 由外部运行时管理；Runtime 任务状态以 append-only JSONL 写入 `.yizutt/runtime/tasks.jsonl`，启动恢复同样通过追加日志记录审计。
 - **内存数据非共享**：Worker 之间不直接共享内存状态，必要协作通过 Runtime 分配子任务。
 - **中文分词**：`memory.py` 写入时生成 tokens，查询时命中 `messages_tokens_fts`。
 - **受控工具执行**：`executor.py` 默认允许项目根目录内的读目录和读文件，但拒绝隐藏/内部目录；写文件必须显式开启 `allow_file_write`，命令必须同时开启 `allow_commands` 并命中 `allowed_commands` 白名单；网络型命令还必须开启 `allow_network` 并命中 `allowed_network_hosts`。
@@ -63,9 +64,9 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 ## 五、当前主要短板（需后续开发）
 
-1. **编排能力仍需深化**：已有最小 `plan_created` 子任务计划、持久任务日志、依赖感知子任务派发、重试、最大并发、队列深度限制和启动恢复/过期策略，但还没有优先级队列和完整 backpressure。
-2. **生产隔离仍需加强**：已有工具级策略、审计、命令超时取消、精简环境和网络 host 白名单，但还没有 cgroups 限制、容器隔离和系统级网络隔离。
-3. **下一阶段重点**：当前明确任务队列已完成；后续优先做容器或 OS sandbox、远程 Worker、优先级队列。
+1. **编排能力仍需深化**：已有最小 `plan_created` 子任务计划、持久任务日志、依赖感知子任务派发、重试、最大并发、队列深度限制、启动恢复/过期策略和准入 backpressure，但还没有优先级队列、延迟调度和完整生产队列语义。
+2. **生产隔离仍需加强**：已有工具级策略、审计、命令超时取消、精简环境、网络 host 白名单、可选 cgroup/container sandbox profile，但还没有跨平台系统级网络 namespace、加固容器镜像和集群级策略下发。
+3. **下一阶段重点**：当前明确任务队列已完成；后续优先做优先级队列、生产可观测性、真实 trainer 执行/adapter artifact 生命周期。
 
 ## 六、当前任务队列
 
@@ -527,12 +528,18 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 启动检查：`BUILD=0 MOCK_PORT=51990 RUNTIME_PORT=51900 WORKER_BASE_PORT=51910 PANEL_PORT=51980 LOG_DIR=.yizutt/script-smoke/logs RUNTIME_HOME=.yizutt/script-smoke/runtime PANEL_HISTORY=.yizutt/script-smoke/panel/history.sqlite3 ./scripts/start_local_demo.sh`
 - 启动后浏览器打开 `http://127.0.0.1:50280`
 
-### N2-4 建议任务：容器或 OS sandbox Worker 隔离
+### N2-4 已完成：生产化隔离、远程 Worker、Backpressure、Embedding 与 LoRA 准备
 
-**目标**：在现有工具级策略和 Worker 子进程隔离基础上，增加可选的系统级隔离边界，降低命令工具和 sidecar 执行的生产风险。
+**目标**：在现有工具级策略和 Worker 子进程隔离基础上，增加可选的系统级隔离边界、远程 Worker、准入 backpressure、dense embedding 检索和 LoRA 训练任务准备能力。
 
-**建议涉及文件**：
+**涉及文件**：
 - `crates/yizutt-runtime/src/main.rs`
+- `crates/yizutt-runtime/src/yizutt.rs`
+- `proto/yizutt.proto`
+- `python/yizutt_agi/memory.py`
+- `python/yizutt_agi/training.py`
+- `python/yizutt_agi/panel.py`
+- `pyproject.toml`
 - `python/yizutt_agi/executor.py`
 - `README.md`
 - `README_CN.md`
@@ -544,9 +551,39 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - `status` 或任务 trace 能暴露当前 sandbox profile 与失败原因。
 - 不破坏现有本地 mock demo、`submit`、`submit --stream`、`tasks` CLI。
 
+**完成情况**：Runtime `run` 新增 `--sandbox-profile process|cgroup|container`、cgroup memory/pids/cpu 参数、container runtime/image 参数、`--remote-worker`、`--max-inflight-per-worker` 和 `--max-runtime-queue-depth`。默认仍是本地 process sandbox；cgroup/container 显式开启，宿主不支持时返回清晰错误。`status` 现在返回 Worker kind、sandbox profile、isolation status、当前 inflight、backpressure 计数和队列限制。Worker 子命令支持 `--bind 0.0.0.0` 作为远程 Worker 入口。`memory.py` 新增 `memory_embeddings` dense embedding 表，配置 `YIZUTT_EMBEDDING_URL` 后调用 OpenAI-compatible embedding endpoint；`search_vector()` 优先使用同 provider/model/dimension 的 dense embedding，未配置时继续使用稀疏向量。新增 `python/yizutt_agi/training.py` 和 `yizutt-train` 入口，可从 accepted training examples 导出 LoRA-ready JSONL dataset 与 `lora_job.json` manifest。
+
+**手动验证命令**：
+- 构建检查：`cargo check --workspace --locked && cargo build --workspace --locked`
+- Backpressure：以 `--max-inflight-per-worker 1 --max-runtime-queue-depth 1` 启动 Runtime，并发提交时应返回 `resource_exhausted`/`queue_rejected`
+- 远程 Worker：`target/debug/yizutt-runtime worker --bind 0.0.0.0 --port 50210 --id remote-a`，再用 `target/debug/yizutt-runtime run --remote-worker http://127.0.0.1:50210 --min-workers 0`
+- cgroup：在支持 cgroup v2 的 Linux 上运行 `target/debug/yizutt-runtime run --sandbox-profile cgroup --cgroup-memory-max-bytes 536870912 --cgroup-pids-max 128`
+- container：准备镜像后运行 `target/debug/yizutt-runtime run --sandbox-profile container --container-runtime podman --container-image yizutt-runtime:latest`
+- embedding：设置 `YIZUTT_EMBEDDING_URL=http://127.0.0.1:<port>/v1/embeddings` 后追加记忆并调用 `search_vector()`
+- LoRA 准备：`PYTHONPATH=python python -m yizutt_agi.training prepare-lora --base-model mistral-7b --output-dir .yizutt/training/lora/latest`
+
+### N2-5 建议任务：优先级队列与生产可观测性
+
+**目标**：在已有准入 backpressure 和持久任务日志基础上，引入优先级队列、延迟/重试调度指标和生产可观测性输出。
+
+**建议涉及文件**：
+- `crates/yizutt-runtime/src/main.rs`
+- `proto/yizutt.proto`
+- `python/yizutt_agi/panel.py`
+- `web/panel/index.html`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**验收标准**：
+- 任务 context 支持 `priority` 并影响 Worker 派发顺序。
+- Runtime status 暴露 queue depth、priority 分布、backpressure/retry/latency 指标。
+- Web 面板可查看队列指标和最近拒绝原因。
+- 不破坏现有 `submit`、`submit --stream`、`tasks`、恢复和远程 Worker。
+
 ### 当前任务状态
 
-截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步、N2-3.2 简化本地启动命令均已完成。下一个建议任务是 N2-4：容器或 OS sandbox Worker 隔离。
+截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步、N2-3.2 简化本地启动命令、N2-4 生产化隔离/远程 Worker/backpressure/embedding/LoRA 准备均已完成。下一个建议任务是 N2-5：优先级队列与生产可观测性。
 
 ## 七、常用开发命令
 

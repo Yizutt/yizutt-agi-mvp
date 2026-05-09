@@ -45,6 +45,9 @@ message WorkerHealth {
   uint32 inflight = 3;
   string checked_at = 4;
   string last_error = 5;
+  string worker_kind = 6;
+  string sandbox_profile = 7;
+  string isolation_status = 8;
 }
 
 message WorkerSnapshot {
@@ -54,10 +57,17 @@ message WorkerSnapshot {
   bool healthy = 4;
   string checked_at = 5;
   string last_error = 6;
+  string worker_kind = 7;
+  string sandbox_profile = 8;
+  string isolation_status = 9;
 }
 
 message PoolStatusReply {
   repeated WorkerSnapshot workers = 1;
   uint32 min_workers = 2;
   uint32 max_workers = 3;
+  uint32 max_inflight_per_worker = 4;
+  uint32 max_runtime_queue_depth = 5;
+  uint32 current_inflight = 6;
+  uint64 backpressure_rejections = 7;
 }

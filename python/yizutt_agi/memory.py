@@ -1,10 +1,12 @@
 import json
+import os
 import re
 import sqlite3
 import time
 import uuid
 from pathlib import Path
 from typing import Iterable
+from urllib import request
 
 
 class WorkingMemory:
@@ -70,8 +72,11 @@ class WorkingMemory:
         self._init_token_triggers()
         self._init_graph_schema()
         self._init_vector_schema()
+        self._init_embedding_schema()
         self._init_training_schema()
         self._backfill_vectors()
+        if os.getenv("YIZUTT_EMBEDDING_BACKFILL", "").lower() in {"1", "true", "yes", "on"}:
+            self._backfill_embeddings()
         self.db.commit()
 
     def _ensure_tokens_column(self) -> None:
@@ -159,6 +164,23 @@ class WorkingMemory:
             """
         )
 
+    def _init_embedding_schema(self) -> None:
+        self.db.executescript(
+            """
+            create table if not exists memory_embeddings(
+              message_id text primary key,
+              provider text not null,
+              model text not null,
+              dimension integer not null,
+              embedding_json text not null,
+              created_at integer not null,
+              foreign key(message_id) references messages(id)
+            );
+            create index if not exists memory_embeddings_model_idx on memory_embeddings(provider, model);
+            create index if not exists memory_embeddings_created_idx on memory_embeddings(created_at);
+            """
+        )
+
     def _init_training_schema(self) -> None:
         self.db.executescript(
             """
@@ -196,6 +218,23 @@ class WorkingMemory:
                 ],
             )
 
+    def _backfill_embeddings(self) -> None:
+        if not embedding_enabled():
+            return
+        rows = self.db.execute(
+            """
+            select m.id, m.content, m.created_at
+            from messages m
+            left join memory_embeddings e on e.message_id = m.id
+            where e.message_id is null
+            order by m.created_at desc
+            limit ?
+            """,
+            (int(os.getenv("YIZUTT_EMBEDDING_BACKFILL_LIMIT", "100")),),
+        ).fetchall()
+        for row in rows:
+            self._store_embedding(row["id"], row["content"], row["created_at"])
+
     def start_session(self, title: str = "") -> str:
         session_id = str(uuid.uuid4())
         now = int(time.time())
@@ -221,10 +260,31 @@ class WorkingMemory:
             "insert or replace into memory_vectors(message_id, vector_json, created_at) values (?, ?, ?)",
             (message_id, json.dumps(text_to_sparse_vector(content), ensure_ascii=False), now),
         )
+        self._store_embedding(message_id, content, now)
         self.db.execute("update sessions set updated_at = ? where id = ?", (now, session_id))
         self._extract_graph_facts(session_id, role, content, message_id)
         self.db.commit()
         return message_id
+
+    def _store_embedding(self, message_id: str, content: str, created_at: int) -> None:
+        embedding = embedding_for_text(content)
+        if embedding is None:
+            return
+        self.db.execute(
+            """
+            insert or replace into memory_embeddings(
+              message_id, provider, model, dimension, embedding_json, created_at
+            ) values (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                message_id,
+                embedding["provider"],
+                embedding["model"],
+                len(embedding["vector"]),
+                json.dumps(embedding["vector"], ensure_ascii=False),
+                created_at,
+            ),
+        )
 
     def search(self, query: str, limit: int = 10) -> list[dict]:
         rows = []
@@ -431,6 +491,9 @@ class WorkingMemory:
         return result[:limit]
 
     def search_vector(self, query: str, limit: int = 10) -> list[dict]:
+        dense = self.search_embedding(query, limit)
+        if dense:
+            return dense
         query_vector = text_to_sparse_vector(query)
         if not query_vector:
             return []
@@ -452,6 +515,38 @@ class WorkingMemory:
             item = self._row_to_dict(row)
             item.pop("vector_json", None)
             item["score"] = score
+            scored.append((score, item["created_at"], item))
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [item for _, _, item in scored[:limit]]
+
+    def search_embedding(self, query: str, limit: int = 10) -> list[dict]:
+        query_embedding = embedding_for_text(query)
+        if query_embedding is None:
+            return []
+        rows = self.db.execute(
+            """
+            select m.id, m.session_id, m.role, m.content, m.meta_json, m.created_at,
+                   e.embedding_json, e.provider, e.model, e.dimension
+            from memory_embeddings e
+            join messages m on m.id = e.message_id
+            where e.provider = ? and e.model = ? and e.dimension = ?
+            order by e.created_at desc
+            limit 1000
+            """,
+            (query_embedding["provider"], query_embedding["model"], len(query_embedding["vector"])),
+        ).fetchall()
+        scored = []
+        for row in rows:
+            vector = json.loads(row["embedding_json"] or "[]")
+            score = dense_cosine_similarity(query_embedding["vector"], vector)
+            if score <= 0:
+                continue
+            item = self._row_to_dict(row)
+            item.pop("embedding_json", None)
+            item["score"] = score
+            item["vector_provider"] = row["provider"]
+            item["vector_model"] = row["model"]
+            item["vector_kind"] = "embedding"
             scored.append((score, item["created_at"], item))
         scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
         return [item for _, _, item in scored[:limit]]
@@ -741,6 +836,60 @@ def graph_fact_score(item: dict, terms: set[str]) -> float:
     density = len(overlap) / max(1, len(fact_terms))
     relation_bonus = 0.15 if item.get("relation") in {"prefers", "uses", "requires", "improves"} else 0.0
     return (coverage * 0.7) + (density * 0.2) + relation_bonus + (float(item.get("weight", 1.0)) * 0.05)
+
+
+def embedding_enabled() -> bool:
+    return bool(os.getenv("YIZUTT_EMBEDDING_URL", "").strip())
+
+
+def embedding_for_text(text: str) -> dict | None:
+    url = os.getenv("YIZUTT_EMBEDDING_URL", "").strip()
+    if not url:
+        return None
+    model = os.getenv("YIZUTT_EMBEDDING_MODEL", "text-embedding-3-small")
+    provider = os.getenv("YIZUTT_EMBEDDING_PROVIDER", "openai-compatible")
+    payload = json.dumps({"model": model, "input": text}, ensure_ascii=False).encode("utf-8")
+    headers = {"Content-Type": "application/json"}
+    api_key = os.getenv("YIZUTT_EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    timeout_secs = float(os.getenv("YIZUTT_EMBEDDING_TIMEOUT_SECS", "10"))
+    req = request.Request(url, data=payload, headers=headers, method="POST")
+    try:
+        with request.urlopen(req, timeout=timeout_secs) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        if os.getenv("YIZUTT_EMBEDDING_STRICT", "").lower() in {"1", "true", "yes", "on"}:
+            raise
+        return None
+    vector = parse_embedding_response(data)
+    if not vector:
+        return None
+    return {"provider": provider, "model": model, "vector": normalize_dense_vector(vector)}
+
+
+def parse_embedding_response(data: dict) -> list[float]:
+    if isinstance(data.get("embedding"), list):
+        return [float(value) for value in data["embedding"]]
+    items = data.get("data")
+    if isinstance(items, list) and items:
+        first = items[0]
+        if isinstance(first, dict) and isinstance(first.get("embedding"), list):
+            return [float(value) for value in first["embedding"]]
+    return []
+
+
+def normalize_dense_vector(vector: list[float]) -> list[float]:
+    norm = sum(value * value for value in vector) ** 0.5
+    if norm <= 0:
+        return vector
+    return [round(value / norm, 8) for value in vector]
+
+
+def dense_cosine_similarity(left: list[float], right: list[float]) -> float:
+    if not left or not right or len(left) != len(right):
+        return 0.0
+    return sum(float(a) * float(b) for a, b in zip(left, right))
 
 
 def text_to_sparse_vector(text: str, max_terms: int = 256) -> dict[str, float]:

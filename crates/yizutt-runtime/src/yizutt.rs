@@ -53,6 +53,12 @@ pub struct WorkerHealth {
     pub checked_at: String,
     #[prost(string, tag = "5")]
     pub last_error: String,
+    #[prost(string, tag = "6")]
+    pub worker_kind: String,
+    #[prost(string, tag = "7")]
+    pub sandbox_profile: String,
+    #[prost(string, tag = "8")]
+    pub isolation_status: String,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -69,6 +75,12 @@ pub struct WorkerSnapshot {
     pub checked_at: String,
     #[prost(string, tag = "6")]
     pub last_error: String,
+    #[prost(string, tag = "7")]
+    pub worker_kind: String,
+    #[prost(string, tag = "8")]
+    pub sandbox_profile: String,
+    #[prost(string, tag = "9")]
+    pub isolation_status: String,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -79,6 +91,14 @@ pub struct PoolStatusReply {
     pub min_workers: u32,
     #[prost(uint32, tag = "3")]
     pub max_workers: u32,
+    #[prost(uint32, tag = "4")]
+    pub max_inflight_per_worker: u32,
+    #[prost(uint32, tag = "5")]
+    pub max_runtime_queue_depth: u32,
+    #[prost(uint32, tag = "6")]
+    pub current_inflight: u32,
+    #[prost(uint64, tag = "7")]
+    pub backpressure_rejections: u64,
 }
 
 pub mod runtime_service_client {

@@ -217,11 +217,13 @@ def api_config(config: PanelConfig) -> dict[str, Any]:
 
 def api_status(config: PanelConfig, query: str) -> dict[str, Any]:
     runtime_addr = query_value(query, "runtime_addr") or config.runtime_addr
-    workers = run_runtime_json(config, ["status", "--addr", runtime_addr])
+    status_payload = run_runtime_json(config, ["status", "--addr", runtime_addr])
+    workers = status_payload.get("workers", []) if isinstance(status_payload, dict) else status_payload
     return {
         "ok": True,
         "runtime_addr": runtime_addr,
         "workers": workers,
+        "runtime": status_payload if isinstance(status_payload, dict) else {"workers": workers},
         "checked_at": int(time.time()),
     }
 
