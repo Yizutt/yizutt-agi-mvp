@@ -23,6 +23,7 @@ The current version still keeps a no-key local mock path for onboarding and smok
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
 - Codex-style local Web workbench for Runtime status, Runtime queue status, task submission with streaming trace output, persistent task history replay, recent memory, skill summaries, and language switching.
 - Global `yizutt` command starts the local Runtime and Web workbench from any directory, while preserving `yizutt skill ...` package management.
+- Guided `yizutt setup` initializes `.yizutt/config.json` for runtime ports, workbench paths, worker counts, recovery mode, startup build policy, and model gateway defaults.
 - Minimal Leader/Orchestrator planning that emits structured `plan_created` trace events for complex tasks.
 - Audited tool policy with path allowlists, command allowlists, command sandbox limits, network host allowlists, and default denial for writes, commands, and internal directories.
 - Minimal MCP stdio client exposed as a gated `mcp_call` executor tool.
@@ -67,7 +68,7 @@ Start the full no-key local runtime and Web workbench from any directory:
 
 `yizutt`
 
-Open `http://127.0.0.1:50280` in a browser. The command starts the deterministic mock model, Rust Runtime, and Web workbench, writes logs to `.yizutt/local-demo/logs`, and stops all three processes when you press Ctrl-C. `yizutt start` remains as a compatibility alias; product commands use subcommands such as `yizutt onboard`, `yizutt gateway`, and `yizutt skill ...`.
+Open `http://127.0.0.1:50280` in a browser. The command starts the deterministic mock model, Rust Runtime, and Web workbench, writes logs to `.yizutt/local-demo/logs`, and stops all three processes when you press Ctrl-C. `yizutt start` remains as a compatibility alias; product commands use subcommands such as `yizutt setup`, `yizutt onboard`, `yizutt gateway`, and `yizutt skill ...`.
 
 Useful overrides:
 
@@ -78,6 +79,8 @@ Useful overrides:
 `yizutt --no-build`
 
 Useful product commands:
+
+`yizutt setup`
 
 `yizutt onboard`
 
@@ -333,7 +336,7 @@ The current prototype has been run locally with:
 - `target/debug/yizutt-runtime submit`
 - Python sidecar execution through an OpenAI-compatible local proxy
 - Local Web workbench status, streaming task submission, memory, skill APIs, and language switching
-- Global `yizutt` startup from outside the repository, including `yizutt --dry-run`, `yizutt onboard`, `yizutt gateway`, and a temporary-port Web API smoke
+- Global `yizutt` startup from outside the repository, including `yizutt setup --yes --dry-run`, `yizutt --dry-run`, `yizutt onboard`, `yizutt gateway`, and a temporary-port Web API smoke
 - Local Web panel `/api/submit-stream` SSE bridge for live gRPC trace output
 - Local Web panel persistent task history list and saved trace replay
 - Local Web workbench Runtime queue view and CI smoke check for HTML, config API, history API, and Runtime task API

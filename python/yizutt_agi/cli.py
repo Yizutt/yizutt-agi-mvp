@@ -4,8 +4,14 @@ import os
 import sys
 from pathlib import Path
 
-from .model_gateway import ModelGateway
 from . import skill_market
+
+
+CONFIG_VERSION = 1
+DEFAULT_CONFIG_REL = ".yizutt/config.json"
+DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -17,6 +23,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args[0] == "start":
         return start_main(args[1:])
+    if args[0] == "setup":
+        return setup_main(args[1:])
     if args[0] == "onboard":
         return onboard_main(args[1:])
     if args[0] == "gateway":
@@ -35,6 +43,7 @@ def print_main_help() -> None:
 Run without a subcommand to start the local Yizutt Runtime and Web workbench.
 
 Commands:
+  setup     Initialize .yizutt/config.json with a guided setup.
   onboard   Show first-run paths, checks, and next commands.
   gateway   Inspect model gateway provider configuration.
   skill     Manage skill packages.
@@ -42,6 +51,7 @@ Commands:
 
 Examples:
   yizutt
+  yizutt setup
   yizutt --no-build
   yizutt onboard
   yizutt gateway
@@ -59,40 +69,91 @@ Startup options:
     )
 
 
+def setup_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="yizutt setup",
+        description="Initialize guided Yizutt local configuration.",
+    )
+    parser.add_argument("--project-root", default=os.getenv("YIZUTT_PROJECT_ROOT", ""))
+    parser.add_argument("--config", default=os.getenv("YIZUTT_CONFIG_PATH", ""))
+    parser.add_argument("--yes", action="store_true", help="Use defaults and do not prompt.")
+    parser.add_argument("--dry-run", action="store_true", help="Print the config that would be written.")
+    parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
+    args = parser.parse_args(argv)
+
+    project_root = resolve_project_root(args.project_root)
+    existing, path = load_config(project_root, args.config)
+    config = merge_dict(default_setup_config(project_root), existing)
+    if args.yes:
+        config = normalize_setup_config(config)
+    else:
+        if not sys.stdin.isatty():
+            raise SystemExit("interactive setup needs a TTY; use yizutt setup --yes for defaults")
+        config = prompt_setup_config(config, path)
+
+    payload = {"ok": True, "path": str(path), "config": config}
+    if args.dry_run:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 0
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+    else:
+        print("Yizutt setup complete")
+        print(f"Config: {path}")
+        print("")
+        print("Next commands:")
+        print("  yizutt gateway")
+        print("  yizutt onboard")
+        print("  yizutt")
+    return 0
+
+
 def onboard_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="yizutt onboard",
         description="Show first-run Yizutt paths, checks, and next commands.",
     )
     parser.add_argument("--project-root", default=os.getenv("YIZUTT_PROJECT_ROOT", ""))
+    parser.add_argument("--config", default=os.getenv("YIZUTT_CONFIG_PATH", ""))
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     args = parser.parse_args(argv)
 
     project_root = resolve_project_root(args.project_root)
-    panel_port = os.getenv("PANEL_PORT", "50280")
-    runtime_port = os.getenv("RUNTIME_PORT", "50200")
-    runtime_bin = resolve_runtime_bin(project_root, os.getenv("RUNTIME_BIN", "target/debug/yizutt-runtime"))
+    config, config_path = load_config(project_root, args.config)
+    env = configured_env(project_root, config, config_path)
+    panel_port = env.get("PANEL_PORT", "50280")
+    runtime_port = env.get("RUNTIME_PORT", "50200")
+    runtime_bin = resolve_runtime_bin(project_root, env.get("RUNTIME_BIN", "target/debug/yizutt-runtime"))
     report = {
         "ok": True,
         "project_root": str(project_root),
+        "config": {
+            "path": str(config_path),
+            "exists": config_path.exists(),
+        },
         "python": sys.executable,
         "runtime": {
-            "addr": f"http://127.0.0.1:{runtime_port}",
+            "addr": f"http://{env.get('RUNTIME_HOST', '127.0.0.1')}:{runtime_port}",
             "binary": str(runtime_bin),
             "binary_exists": Path(runtime_bin).exists(),
-            "home": str(project_root / ".yizutt" / "runtime"),
+            "home": env.get("RUNTIME_HOME", str(project_root / ".yizutt" / "runtime")),
         },
         "workbench": {
             "url": f"http://127.0.0.1:{panel_port}",
-            "history": str(project_root / ".yizutt" / "panel" / "history.sqlite3"),
+            "history": env.get("PANEL_HISTORY", str(project_root / ".yizutt" / "panel" / "history.sqlite3")),
         },
         "data": {
-            "memory": str(project_root / ".yizutt" / "memory" / "work.sqlite3"),
-            "skills": str(project_root / ".yizutt" / "skills"),
-            "logs": str(project_root / ".yizutt" / "local-demo" / "logs"),
+            "memory": env.get("YIZUTT_MEMORY_PATH", str(project_root / ".yizutt" / "memory" / "work.sqlite3")),
+            "skills": env.get("YIZUTT_SKILLS_ROOT", str(project_root / ".yizutt" / "skills")),
+            "logs": env.get("LOG_DIR", str(project_root / ".yizutt" / "local-demo" / "logs")),
         },
-        "gateway": gateway_status_payload(),
+        "gateway": gateway_status_payload(env),
         "commands": [
+            "yizutt setup",
             "yizutt",
             "yizutt --no-build",
             "yizutt gateway",
@@ -113,10 +174,16 @@ def gateway_main(argv: list[str]) -> int:
         prog="yizutt gateway",
         description="Inspect model gateway provider configuration without printing secrets.",
     )
+    parser.add_argument("--project-root", default=os.getenv("YIZUTT_PROJECT_ROOT", ""))
+    parser.add_argument("--config", default=os.getenv("YIZUTT_CONFIG_PATH", ""))
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON.")
     args = parser.parse_args(argv)
 
-    payload = gateway_status_payload()
+    project_root = resolve_project_root(args.project_root)
+    config, config_path = load_config(project_root, args.config)
+    env = configured_env(project_root, config, config_path)
+    payload = gateway_status_payload(env)
+    payload["config"] = {"path": str(config_path), "exists": config_path.exists()}
     if args.json:
         print(json.dumps({"ok": True, **payload}, ensure_ascii=False, indent=2))
     else:
@@ -125,14 +192,17 @@ def gateway_main(argv: list[str]) -> int:
 
 
 def print_onboard(report: dict[str, object]) -> None:
+    config = report["config"]
     runtime = report["runtime"]
     workbench = report["workbench"]
     data = report["data"]
+    assert isinstance(config, dict)
     assert isinstance(runtime, dict)
     assert isinstance(workbench, dict)
     assert isinstance(data, dict)
     print("Yizutt onboarding")
     print(f"Project:   {report['project_root']}")
+    print(f"Config:    {config['path']}{'' if config['exists'] else ' (not initialized)'}")
     print(f"Python:    {report['python']}")
     print(f"Runtime:   {runtime['addr']}")
     print(f"Workbench: {workbench['url']}")
@@ -149,8 +219,11 @@ def print_onboard(report: dict[str, object]) -> None:
 
 
 def print_gateway_status(payload: dict[str, object]) -> None:
+    config = payload.get("config")
     print("Yizutt model gateway")
     print(f"Default provider: {payload['default_provider'] or 'not configured'}")
+    if isinstance(config, dict):
+        print(f"Config: {config['path']}{'' if config['exists'] else ' (not initialized)'}")
     print("")
     providers = payload["providers"]
     assert isinstance(providers, dict)
@@ -164,34 +237,50 @@ def print_gateway_status(payload: dict[str, object]) -> None:
     print("Set one of: OPENAI_API_KEY, ANTHROPIC_API_KEY, YIZUTT_LOCAL_MODEL_URL")
 
 
-def gateway_status_payload() -> dict[str, object]:
-    gateway = ModelGateway()
-    openai_key = bool(os.getenv("OPENAI_API_KEY") or (gateway.openai_base_url != "https://api.openai.com/v1" and os.getenv("PROXY_API_KEY")))
-    anthropic_key = bool(os.getenv("ANTHROPIC_API_KEY"))
-    local_url = bool(gateway.local_url)
-    default_provider = ""
-    for name, configured in [("openai", openai_key), ("anthropic", anthropic_key), ("local", local_url)]:
-        if configured:
-            default_provider = name
-            break
+def gateway_status_payload(env: dict[str, str] | None = None) -> dict[str, object]:
+    values = os.environ if env is None else env
+    openai_model = values.get("YIZUTT_OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+    anthropic_model = values.get("YIZUTT_ANTHROPIC_MODEL", DEFAULT_ANTHROPIC_MODEL)
+    openai_base_url = values.get("YIZUTT_OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL).rstrip("/")
+    openai_api_style = values.get("YIZUTT_OPENAI_API_STYLE") or (
+        "responses" if openai_base_url == DEFAULT_OPENAI_BASE_URL else "chat"
+    )
+    local_url = values.get("YIZUTT_LOCAL_MODEL_URL", "")
+    openai_key = bool(values.get("OPENAI_API_KEY") or (openai_base_url != DEFAULT_OPENAI_BASE_URL and values.get("PROXY_API_KEY")))
+    anthropic_key = bool(values.get("ANTHROPIC_API_KEY"))
+    local_configured = bool(local_url)
+    providers = {
+        "openai": openai_key,
+        "anthropic": anthropic_key,
+        "local": local_configured,
+    }
+    preferred = values.get("YIZUTT_MODEL_PROVIDER", "")
+    if preferred in providers and providers[preferred]:
+        default_provider = preferred
+    else:
+        default_provider = ""
+        for name, configured in providers.items():
+            if configured:
+                default_provider = name
+                break
     return {
         "default_provider": default_provider,
         "providers": {
             "openai": {
                 "configured": openai_key,
-                "model": gateway.openai_model,
-                "base_url": gateway.openai_base_url,
-                "api_style": gateway.openai_api_style,
-                "auth": "OPENAI_API_KEY" if os.getenv("OPENAI_API_KEY") else ("PROXY_API_KEY" if openai_key else ""),
+                "model": openai_model,
+                "base_url": openai_base_url,
+                "api_style": openai_api_style,
+                "auth": "OPENAI_API_KEY" if values.get("OPENAI_API_KEY") else ("PROXY_API_KEY" if openai_key else ""),
             },
             "anthropic": {
                 "configured": anthropic_key,
-                "model": gateway.anthropic_model,
+                "model": anthropic_model,
                 "auth": "ANTHROPIC_API_KEY" if anthropic_key else "",
             },
             "local": {
-                "configured": local_url,
-                "url": gateway.local_url,
+                "configured": local_configured,
+                "url": local_url,
                 "auth": "",
             },
         },
@@ -211,6 +300,7 @@ def start_main(argv: list[str]) -> int:
         description="Start the local Yizutt Runtime and Web workbench.",
     )
     parser.add_argument("--project-root", default=os.getenv("YIZUTT_PROJECT_ROOT", ""))
+    parser.add_argument("--config", default=os.getenv("YIZUTT_CONFIG_PATH", ""))
     parser.add_argument("--panel-port")
     parser.add_argument("--runtime-host")
     parser.add_argument("--runtime-port")
@@ -230,12 +320,12 @@ def start_main(argv: list[str]) -> int:
     args = parser.parse_args(argv)
 
     project_root = resolve_project_root(args.project_root)
+    config, config_path = load_config(project_root, args.config)
     script = project_root / "scripts" / "start_local_demo.sh"
     if not script.exists():
         raise SystemExit(f"startup script not found: {script}")
 
-    env = os.environ.copy()
-    env["YIZUTT_PROJECT_ROOT"] = str(project_root)
+    env = configured_env(project_root, config, config_path)
     copy_option(env, "PANEL_PORT", args.panel_port)
     copy_option(env, "RUNTIME_HOST", args.runtime_host)
     copy_option(env, "RUNTIME_PORT", args.runtime_port)
@@ -287,6 +377,245 @@ def resolve_runtime_bin(project_root: Path, value: str) -> Path:
     return candidate
 
 
+def config_path_for(project_root: Path, value: str = "") -> Path:
+    candidate = Path(value or DEFAULT_CONFIG_REL).expanduser()
+    if not candidate.is_absolute():
+        candidate = project_root / candidate
+    return candidate
+
+
+def load_config(project_root: Path, value: str = "") -> tuple[dict[str, object], Path]:
+    path = config_path_for(project_root, value)
+    if not path.exists():
+        return {}, path
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise SystemExit(f"config must be a JSON object: {path}")
+    return data, path
+
+
+def configured_env(project_root: Path, config: dict[str, object], config_path: Path) -> dict[str, str]:
+    env = os.environ.copy()
+    env["YIZUTT_PROJECT_ROOT"] = str(project_root)
+    env["YIZUTT_CONFIG_PATH"] = str(config_path)
+    apply_config_defaults(env, config)
+    return env
+
+
+def apply_config_defaults(env: dict[str, str], config: dict[str, object]) -> None:
+    runtime = child_dict(config, "runtime")
+    panel = child_dict(config, "panel")
+    model = child_dict(config, "model")
+    paths = child_dict(config, "paths")
+    startup = child_dict(config, "startup")
+
+    set_default(env, "RUNTIME_HOST", runtime.get("host"))
+    set_default(env, "RUNTIME_PORT", runtime.get("port"))
+    set_default(env, "WORKER_BASE_PORT", runtime.get("worker_base_port"))
+    set_default(env, "MOCK_PORT", runtime.get("mock_port"))
+    set_default(env, "MIN_WORKERS", runtime.get("min_workers"))
+    set_default(env, "MAX_WORKERS", runtime.get("max_workers"))
+    set_default(env, "RUNTIME_HOME", runtime.get("home"))
+    set_default(env, "RECOVERY_MODE", runtime.get("recovery_mode"))
+
+    set_default(env, "PANEL_PORT", panel.get("port"))
+    set_default(env, "PANEL_HISTORY", panel.get("history_path"))
+
+    set_default(env, "LOG_DIR", paths.get("log_dir"))
+    set_default(env, "YIZUTT_MEMORY_PATH", paths.get("memory_path"))
+    set_default(env, "YIZUTT_SKILLS_ROOT", paths.get("skills_root"))
+
+    if "build" in startup and "BUILD" not in env:
+        env["BUILD"] = "1" if bool(startup["build"]) else "0"
+
+    set_default(env, "YIZUTT_MODEL_PROVIDER", model.get("provider"))
+    set_default(env, "YIZUTT_OPENAI_MODEL", model.get("openai_model"))
+    set_default(env, "YIZUTT_OPENAI_BASE_URL", model.get("openai_base_url"))
+    set_default(env, "YIZUTT_OPENAI_API_STYLE", model.get("openai_api_style"))
+    set_default(env, "YIZUTT_ANTHROPIC_MODEL", model.get("anthropic_model"))
+    if model.get("provider") == "local" or model.get("local_model_url"):
+        set_default(env, "YIZUTT_LOCAL_MODEL_URL", model.get("local_model_url"))
+
+
+def set_default(env: dict[str, str], name: str, value: object) -> None:
+    if value is None or value == "" or name in env:
+        return
+    env[name] = str(value)
+
+
+def child_dict(data: dict[str, object], key: str) -> dict[str, object]:
+    value = data.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def default_setup_config(project_root: Path) -> dict[str, object]:
+    return {
+        "version": CONFIG_VERSION,
+        "runtime": {
+            "host": "127.0.0.1",
+            "port": 50200,
+            "worker_base_port": 50210,
+            "mock_port": 50990,
+            "min_workers": 1,
+            "max_workers": 2,
+            "home": ".yizutt/runtime",
+            "recovery_mode": "none",
+        },
+        "panel": {
+            "port": 50280,
+            "history_path": ".yizutt/panel/history.sqlite3",
+        },
+        "model": {
+            "provider": "local",
+            "local_model_url": "http://127.0.0.1:50990",
+            "openai_model": DEFAULT_OPENAI_MODEL,
+            "openai_base_url": DEFAULT_OPENAI_BASE_URL,
+            "openai_api_style": "responses",
+            "anthropic_model": DEFAULT_ANTHROPIC_MODEL,
+            "required_env": [],
+        },
+        "paths": {
+            "log_dir": ".yizutt/local-demo/logs",
+            "memory_path": ".yizutt/memory/work.sqlite3",
+            "skills_root": ".yizutt/skills",
+        },
+        "startup": {
+            "build": True,
+        },
+    }
+
+
+def normalize_setup_config(config: dict[str, object]) -> dict[str, object]:
+    runtime = child_dict(config, "runtime")
+    model = child_dict(config, "model")
+    provider = str(model.get("provider") or "local")
+    if provider == "local" and not model.get("local_model_url"):
+        model["local_model_url"] = f"http://127.0.0.1:{runtime.get('mock_port', 50990)}"
+    if provider == "openai":
+        model["required_env"] = ["OPENAI_API_KEY"]
+        model["openai_base_url"] = DEFAULT_OPENAI_BASE_URL
+        model["openai_api_style"] = "responses"
+    elif provider == "openai-compatible":
+        model["required_env"] = ["PROXY_API_KEY"]
+        model["openai_api_style"] = "chat"
+    elif provider == "anthropic":
+        model["required_env"] = ["ANTHROPIC_API_KEY"]
+    else:
+        model["provider"] = "local"
+        model["required_env"] = []
+    config["model"] = model
+    config["version"] = CONFIG_VERSION
+    return config
+
+
+def prompt_setup_config(config: dict[str, object], path: Path) -> dict[str, object]:
+    runtime = child_dict(config, "runtime")
+    panel = child_dict(config, "panel")
+    model = child_dict(config, "model")
+    paths = child_dict(config, "paths")
+    startup = child_dict(config, "startup")
+
+    print("Yizutt setup")
+    print(f"Config: {path}")
+    print("")
+
+    runtime["host"] = prompt_text("Runtime host", runtime.get("host", "127.0.0.1"))
+    runtime["port"] = prompt_int("Runtime port", runtime.get("port", 50200), 1, 65535)
+    runtime["worker_base_port"] = prompt_int("Worker base port", runtime.get("worker_base_port", 50210), 1, 65535)
+    panel["port"] = prompt_int("Workbench panel port", panel.get("port", 50280), 1, 65535)
+    runtime["min_workers"] = prompt_int("Min workers", runtime.get("min_workers", 1), 0, 1024)
+    runtime["max_workers"] = prompt_int("Max workers", runtime.get("max_workers", 2), int(runtime["min_workers"]), 1024)
+    runtime["recovery_mode"] = prompt_choice("Startup recovery mode", ["none", "resume", "expire"], runtime.get("recovery_mode", "none"))
+    startup["build"] = prompt_bool("Build Rust workspace before startup", bool(startup.get("build", True)))
+
+    provider = prompt_choice("Model provider", ["local", "openai", "anthropic", "openai-compatible"], model.get("provider", "local"))
+    model["provider"] = provider
+    if provider == "local":
+        mock_port = prompt_int("Local mock model port", runtime.get("mock_port", 50990), 1, 65535)
+        runtime["mock_port"] = mock_port
+        default_url = model.get("local_model_url") or f"http://127.0.0.1:{mock_port}"
+        model["local_model_url"] = prompt_text("Local model URL", default_url)
+        model["required_env"] = []
+    elif provider == "openai":
+        model["openai_model"] = prompt_text("OpenAI model", model.get("openai_model", DEFAULT_OPENAI_MODEL))
+        model["openai_base_url"] = DEFAULT_OPENAI_BASE_URL
+        model["openai_api_style"] = "responses"
+        model["required_env"] = ["OPENAI_API_KEY"]
+    elif provider == "anthropic":
+        model["anthropic_model"] = prompt_text("Anthropic model", model.get("anthropic_model", DEFAULT_ANTHROPIC_MODEL))
+        model["required_env"] = ["ANTHROPIC_API_KEY"]
+    else:
+        model["openai_base_url"] = prompt_text("OpenAI-compatible base URL", model.get("openai_base_url", "http://127.0.0.1:48327/v1"))
+        model["openai_model"] = prompt_text("OpenAI-compatible model", model.get("openai_model", DEFAULT_OPENAI_MODEL))
+        model["openai_api_style"] = "chat"
+        model["required_env"] = ["PROXY_API_KEY"]
+
+    if prompt_bool("Configure advanced paths", False):
+        runtime["home"] = prompt_text("Runtime home", runtime.get("home", ".yizutt/runtime"))
+        panel["history_path"] = prompt_text("Panel history DB", panel.get("history_path", ".yizutt/panel/history.sqlite3"))
+        paths["log_dir"] = prompt_text("Log directory", paths.get("log_dir", ".yizutt/local-demo/logs"))
+        paths["memory_path"] = prompt_text("Memory DB", paths.get("memory_path", ".yizutt/memory/work.sqlite3"))
+        paths["skills_root"] = prompt_text("Skills root", paths.get("skills_root", ".yizutt/skills"))
+
+    config["runtime"] = runtime
+    config["panel"] = panel
+    config["model"] = model
+    config["paths"] = paths
+    config["startup"] = startup
+    return normalize_setup_config(config)
+
+
+def prompt_text(label: str, default: object) -> str:
+    default_text = str(default)
+    value = input(f"{label} [{default_text}]: ").strip()
+    return value or default_text
+
+
+def prompt_int(label: str, default: object, min_value: int, max_value: int) -> int:
+    while True:
+        value = prompt_text(label, default)
+        try:
+            parsed = int(value)
+        except ValueError:
+            print(f"Enter a number from {min_value} to {max_value}.")
+            continue
+        if min_value <= parsed <= max_value:
+            return parsed
+        print(f"Enter a number from {min_value} to {max_value}.")
+
+
+def prompt_choice(label: str, choices: list[str], default: object) -> str:
+    default_text = str(default) if str(default) in choices else choices[0]
+    while True:
+        value = prompt_text(f"{label} ({'/'.join(choices)})", default_text)
+        if value in choices:
+            return value
+        print(f"Choose one of: {', '.join(choices)}")
+
+
+def prompt_bool(label: str, default: bool) -> bool:
+    suffix = "Y/n" if default else "y/N"
+    while True:
+        value = input(f"{label} [{suffix}]: ").strip().lower()
+        if not value:
+            return default
+        if value in {"y", "yes"}:
+            return True
+        if value in {"n", "no"}:
+            return False
+        print("Enter y or n.")
+
+
+def merge_dict(base: dict[str, object], overlay: dict[str, object]) -> dict[str, object]:
+    merged = dict(base)
+    for key, value in overlay.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge_dict(merged[key], value)  # type: ignore[arg-type]
+        else:
+            merged[key] = value
+    return merged
+
+
 def copy_option(env: dict[str, str], name: str, value: str | None) -> None:
     if value:
         env[name] = value
@@ -295,6 +624,7 @@ def copy_option(env: dict[str, str], name: str, value: str | None) -> None:
 def exported_start_env(env: dict[str, str]) -> dict[str, str]:
     names = [
         "YIZUTT_PROJECT_ROOT",
+        "YIZUTT_CONFIG_PATH",
         "PANEL_PORT",
         "RUNTIME_HOST",
         "RUNTIME_PORT",
@@ -308,6 +638,14 @@ def exported_start_env(env: dict[str, str]) -> dict[str, str]:
         "RUNTIME_BIN",
         "RECOVERY_MODE",
         "BUILD",
+        "YIZUTT_MODEL_PROVIDER",
+        "YIZUTT_OPENAI_MODEL",
+        "YIZUTT_OPENAI_BASE_URL",
+        "YIZUTT_OPENAI_API_STYLE",
+        "YIZUTT_ANTHROPIC_MODEL",
+        "YIZUTT_LOCAL_MODEL_URL",
+        "YIZUTT_MEMORY_PATH",
+        "YIZUTT_SKILLS_ROOT",
     ]
     return {name: env[name] for name in names if name in env}
 

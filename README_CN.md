@@ -23,6 +23,7 @@ Yizutt AGI Runtime 正在从概念验证进入产品化的本地优先 Agent Run
 - `python -m yizutt_agi.real_loop` 可以不启动 Rust Runtime，直接跑一次“任务-记录-存技能”闭环。
 - Codex 风格本地 Web 工作台支持查看 Runtime 状态、Runtime 队列状态、提交任务并流式显示 trace、持久任务历史 replay、查看最近记忆和技能摘要，并支持多语言切换。
 - 全局 `yizutt` 命令可在任意路径启动本地 Runtime 和 Web 工作台，同时保留 `yizutt skill ...` 技能包管理。
+- 引导式 `yizutt setup` 可初始化 `.yizutt/config.json`，配置 Runtime 端口、工作台路径、Worker 数量、恢复策略、启动构建策略和模型网关默认值。
 - 最小 Leader/Orchestrator 规划能力会为复杂任务生成结构化 `plan_created` trace 事件。
 - 工具执行带安全审计策略，支持路径白名单、命令白名单、命令沙箱限制和网络 host 白名单，默认拒绝写文件、执行命令和访问内部目录。
 - 最小 MCP stdio client 已作为受控 `mcp_call` executor 工具接入。
@@ -69,7 +70,7 @@ Rust 构建使用 vendored `protoc`，不需要系统预装 `protoc`。
 
 `yizutt`
 
-然后在浏览器打开 `http://127.0.0.1:50280`。该命令会启动确定性 mock 模型、Rust Runtime 和 Web 工作台，日志写入 `.yizutt/local-demo/logs`，按 Ctrl-C 会同时停止这三个进程。`yizutt start` 保留为兼容别名；产品功能命令使用 `yizutt onboard`、`yizutt gateway`、`yizutt skill ...` 这类子命令。
+然后在浏览器打开 `http://127.0.0.1:50280`。该命令会启动确定性 mock 模型、Rust Runtime 和 Web 工作台，日志写入 `.yizutt/local-demo/logs`，按 Ctrl-C 会同时停止这三个进程。`yizutt start` 保留为兼容别名；产品功能命令使用 `yizutt setup`、`yizutt onboard`、`yizutt gateway`、`yizutt skill ...` 这类子命令。
 
 常用覆盖参数：
 
@@ -80,6 +81,8 @@ Rust 构建使用 vendored `protoc`，不需要系统预装 `protoc`。
 `yizutt --no-build`
 
 常用产品命令：
+
+`yizutt setup`
 
 `yizutt onboard`
 
@@ -335,7 +338,7 @@ GitHub Actions 会在 push 到 `main` 和 pull request 时运行核心 CI 检查
 - `target/debug/yizutt-runtime submit`
 - 通过 OpenAI-compatible 本地代理执行 Python sidecar 真实模型调用
 - 本地 Web 工作台的状态、流式任务提交、持久任务历史 replay、记忆、技能 API 和多语言切换
-- 从仓库外路径执行全局 `yizutt` 启动检查，包括 `yizutt --dry-run`、`yizutt onboard`、`yizutt gateway` 和临时端口 Web API smoke
+- 从仓库外路径执行全局 `yizutt` 启动检查，包括 `yizutt setup --yes --dry-run`、`yizutt --dry-run`、`yizutt onboard`、`yizutt gateway` 和临时端口 Web API smoke
 - 本地 Web 面板 `/api/submit-stream` SSE 桥接可实时显示 gRPC trace 输出
 - 本地 Web 面板持久任务历史列表和已保存 trace replay
 - 本地 Web 工作台 Runtime 队列视图和 CI smoke 覆盖 HTML、配置 API、历史 API、Runtime 任务 API
