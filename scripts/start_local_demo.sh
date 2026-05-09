@@ -16,6 +16,7 @@ PANEL_HISTORY="${PANEL_HISTORY:-.yizutt/panel/history.sqlite3}"
 LOG_DIR="${LOG_DIR:-.yizutt/local-demo/logs}"
 BUILD="${BUILD:-1}"
 RECOVERY_MODE="${RECOVERY_MODE:-none}"
+PYTHON_BIN="${YIZUTT_PYTHON:-python}"
 
 RUNTIME_BIN="${RUNTIME_BIN:-target/debug/yizutt-runtime}"
 RUNTIME_ADDR="http://${RUNTIME_HOST}:${RUNTIME_PORT}"
@@ -47,7 +48,7 @@ wait_for_runtime() {
 
 wait_for_mock() {
   for _ in $(seq 1 40); do
-    if python - "$LOCAL_MODEL_URL" >/dev/null 2>&1 <<'PY'
+    if "$PYTHON_BIN" - "$LOCAL_MODEL_URL" >/dev/null 2>&1 <<'PY'
 import sys
 from urllib.request import Request, urlopen
 
@@ -71,7 +72,7 @@ PY
 
 wait_for_panel() {
   for _ in $(seq 1 40); do
-    if python - "$PANEL_URL/api/config" >/dev/null 2>&1 <<'PY'
+    if "$PYTHON_BIN" - "$PANEL_URL/api/config" >/dev/null 2>&1 <<'PY'
 import sys
 from urllib.request import urlopen
 
@@ -107,7 +108,7 @@ fi
 
 export PYTHONPATH="${ROOT_DIR}/python${PYTHONPATH:+:${PYTHONPATH}}"
 
-python examples/local_mock_model.py --port "$MOCK_PORT" >"${LOG_DIR}/mock-model.log" 2>&1 &
+"$PYTHON_BIN" examples/local_mock_model.py --port "$MOCK_PORT" >"${LOG_DIR}/mock-model.log" 2>&1 &
 MOCK_PID=$!
 wait_for_mock
 
@@ -123,7 +124,7 @@ RUNTIME_PID=$!
 
 wait_for_runtime
 
-python -m yizutt_agi.panel \
+"$PYTHON_BIN" -m yizutt_agi.panel \
   --port "$PANEL_PORT" \
   --runtime-addr "$RUNTIME_ADDR" \
   --runtime-bin "$RUNTIME_BIN" \

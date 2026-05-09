@@ -1,4 +1,3 @@
 [workspace]
-members = ["crates/yizutt-runtime"]
+members = ["crates/yizutt-runtime", "crates/yizutt-launcher"]
 resolver = "2"
-

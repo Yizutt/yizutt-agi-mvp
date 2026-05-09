@@ -31,6 +31,7 @@ The current version still keeps a no-key local mock path for onboarding and smok
 - Global `yizutt` command starts the local Runtime and Web workbench from any directory, while preserving `yizutt skill ...` package management.
 - Guided `yizutt setup` initializes `.yizutt/config.json` for runtime ports, workbench paths, worker counts, recovery mode, startup build policy, and model gateway defaults.
 - `yizutt capabilities` exposes the Codex/OpenClaw/Hermes/evolution capability matrix, and `yizutt evolve` turns current gaps into self-evolution tasks.
+- Portable binary packaging with a native `bin/yizutt` launcher, bundled `bin/yizutt-runtime`, Python modules, Web assets, scripts, and checksum output.
 - Minimal Leader/Orchestrator planning that emits structured `plan_created` trace events for complex tasks.
 - Audited tool policy with path allowlists, command allowlists, command sandbox limits, network host allowlists, and default denial for writes, commands, and internal directories.
 - Minimal MCP stdio client exposed as a gated `mcp_call` executor tool.
@@ -69,6 +70,22 @@ Install the Python package in editable mode:
 `python -m pip install -e .`
 
 The Rust build uses a vendored `protoc`, so a system `protoc` binary is not required.
+
+## Binary Package
+
+Build a portable package for the current host:
+
+`scripts/package_binary.sh`
+
+The package is written to `dist/yizutt-<version>-<target>/` and `dist/yizutt-<version>-<target>.tar.gz`. It contains native `bin/yizutt` and `bin/yizutt-runtime` executables plus the Python modules, Web assets, examples, scripts, README files, and checksum. The launcher uses the bundled Runtime binary by default and skips Cargo builds with `BUILD=0`.
+
+Run it from any directory:
+
+`dist/yizutt-0.1.0-aarch64-linux-android/bin/yizutt --help`
+
+`dist/yizutt-0.1.0-aarch64-linux-android/bin/yizutt --dry-run --no-build`
+
+The current package still requires Python 3.11 or newer on the host. Set `YIZUTT_PYTHON=/path/to/python` if Python is not available as `python3` or `python`.
 
 ## Quick Start
 

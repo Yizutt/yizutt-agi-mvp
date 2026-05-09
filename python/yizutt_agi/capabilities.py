@@ -139,6 +139,17 @@ CAPABILITIES: list[dict[str, Any]] = [
         "commands": ["python -m yizutt_agi.panel --help"],
     },
     {
+        "id": "openclaw-binary-package",
+        "pillar": "openclaw",
+        "name": "Portable binary package",
+        "status": "implemented",
+        "priority": 45,
+        "evidence": "scripts/package_binary.sh builds release binaries and produces a tar.gz package with bin/yizutt and bin/yizutt-runtime.",
+        "next_step": "Add CI release artifacts for Linux, macOS, Android/Termux, and Windows targets.",
+        "acceptance": ["package contains native launchers", "package can run from outside the source tree", "archive has checksum"],
+        "commands": ["scripts/package_binary.sh"],
+    },
+    {
         "id": "openclaw-operator-runbook",
         "pillar": "openclaw",
         "name": "Operator runbook",

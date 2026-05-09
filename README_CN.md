@@ -31,6 +31,7 @@ Yizutt AGI Runtime 正在从概念验证进入产品化的本地优先 Agent Run
 - 全局 `yizutt` 命令可在任意路径启动本地 Runtime 和 Web 工作台，同时保留 `yizutt skill ...` 技能包管理。
 - 引导式 `yizutt setup` 可初始化 `.yizutt/config.json`，配置 Runtime 端口、工作台路径、Worker 数量、恢复策略、启动构建策略和模型网关默认值。
 - `yizutt capabilities` 会输出 Codex/OpenClaw/Hermes/进化能力矩阵，`yizutt evolve` 会把当前缺口生成自进化任务。
+- 便携二进制打包支持原生 `bin/yizutt` 启动器、内置 `bin/yizutt-runtime`、Python 模块、Web 资源、脚本和 checksum 输出。
 - 最小 Leader/Orchestrator 规划能力会为复杂任务生成结构化 `plan_created` trace 事件。
 - 工具执行带安全审计策略，支持路径白名单、命令白名单、命令沙箱限制和网络 host 白名单，默认拒绝写文件、执行命令和访问内部目录。
 - 最小 MCP stdio client 已作为受控 `mcp_call` executor 工具接入。
@@ -71,6 +72,22 @@ Yizutt AGI Runtime 正在从概念验证进入产品化的本地优先 Agent Run
 `python -m pip install -e .`
 
 Rust 构建使用 vendored `protoc`，不需要系统预装 `protoc`。
+
+## 二进制打包
+
+为当前宿主平台构建便携包：
+
+`scripts/package_binary.sh`
+
+产物会写入 `dist/yizutt-<version>-<target>/` 和 `dist/yizutt-<version>-<target>.tar.gz`。包内包含原生 `bin/yizutt`、`bin/yizutt-runtime`、Python 模块、Web 资源、示例、脚本、README 和 checksum。启动器默认使用包内 Runtime 二进制，并设置 `BUILD=0` 跳过 Cargo 构建。
+
+可在任意路径运行：
+
+`dist/yizutt-0.1.0-aarch64-linux-android/bin/yizutt --help`
+
+`dist/yizutt-0.1.0-aarch64-linux-android/bin/yizutt --dry-run --no-build`
+
+当前包仍要求宿主有 Python 3.11 或更新版本。如果 Python 不叫 `python3` 或 `python`，可设置 `YIZUTT_PYTHON=/path/to/python`。
 
 ## 快速运行
 

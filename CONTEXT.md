@@ -27,6 +27,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **本地 Web 工作台**：`python -m yizutt_agi.panel` 可启动 Codex 风格浏览器工作台，左侧查看历史任务和 Runtime 队列，中间提交任务并实时显示 trace，右侧检查 Runtime、能力矩阵、记忆和技能；Runtime 状态会显示 Worker、sandbox、backpressure 摘要，并支持全局语言短码切换，默认 `cnzh` 中文-简体，可切换繁体中文、英语、日语、韩语、阿拉伯语、俄语。
 - **全局 CLI**：安装 Python 包后可在任意路径执行裸 `yizutt` 默认启动 mock 模型、Rust Runtime 和 Web 工作台，默认访问 `http://127.0.0.1:50280`，Ctrl-C 会清理所有子进程；产品功能使用 `yizutt setup`、`yizutt onboard`、`yizutt gateway`、`yizutt skill ...` 等子命令。
 - **能力矩阵与自进化计划**：`python/yizutt_agi/capabilities.py` 统一维护 Codex/OpenClaw/Hermes/进化能力矩阵；`yizutt capabilities` 可查看实现状态，`yizutt evolve` 可把 partial/planned 能力缺口生成下一步自进化任务，Web 工作台也通过 `/api/capabilities` 与 `/api/evolution-plan` 展示同一数据。
+- **便携二进制包**：新增 Rust `yizutt` launcher 和 `scripts/package_binary.sh`，可生成包含 `bin/yizutt`、`bin/yizutt-runtime`、Python 模块、Web 资源、脚本和 checksum 的 `dist/yizutt-<version>-<target>.tar.gz`。
 - **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回；`execute_plan_parallel=true` 时 Runtime 会持久化计划，并按 `depends_on`、最大并发、队列深度和重试策略派发子任务。
 - **主动健康检查**：Runtime `status` 会主动探测 Worker RPC 和 Python sidecar 导入状态，任务级错误返回 `status: "error"`，不再误杀 Worker。
 - **开源许可证**：仓库根目录已添加 MIT `LICENSE`，README 和中文说明已同步许可证信息。
@@ -47,6 +48,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 | 模块 | 路径 | 职责 |
 |------|------|------|
 | Rust Runtime 主程序 | `crates/yizutt-runtime/src/main.rs` | WorkerPool 管理、主动健康探测、持久任务日志、启动恢复、并行子任务派发、远程 Worker、backpressure、sandbox profile、gRPC 服务启动 |
+| Rust `yizutt` 启动器 | `crates/yizutt-launcher/src/main.rs` | 便携包内的原生 `yizutt` 二进制，定位包根目录并设置 Python/Runtime/Web 资源环境 |
 | Protobuf 定义 | `proto/yizutt.proto` | 定义 RuntimeService、WorkerService 和健康检查字段 |
 | Python 执行器 | `python/yizutt_agi/executor.py` | 被 Worker 调用的入口，负责模型调用、工具循环、基础沙箱策略、最小任务分解、写记忆、存技能 |
 | 模型网关 | `python/yizutt_agi/model_gateway.py` | 多厂商 API 统一调用，启发式路由 |
@@ -59,6 +61,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 | 本地面板服务 | `python/yizutt_agi/panel.py` | 提供 HTTP 面板 API，代理 Runtime CLI，保存任务历史，读取 Runtime 队列、记忆和技能摘要，并用 SSE 桥接流式任务输出 |
 | 本地面板页面 | `web/panel/index.html` | Codex 风格浏览器工作台，提供历史/队列活动栏、任务流输入区、Runtime 检查器、实时 trace、任务历史 replay、记忆和技能视图 |
 | 本地启动脚本 | `scripts/start_local_demo.sh` | 由 `yizutt` 调用，启动 mock 模型、Runtime 和 Web 工作台，并在退出时清理子进程 |
+| 二进制打包脚本 | `scripts/package_binary.sh` | 构建 release 版 `yizutt`/`yizutt-runtime`，组装便携目录、tar.gz 和 sha256 checksum |
 | 离线闭环测试 | `python/yizutt_agi/real_loop.py` | 不依赖 Runtime 的端到端验证脚本 |
 
 ## 四、架构决策
@@ -68,6 +71,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **OpenClaw 作为操作入口参照**：全局 `yizutt` 命令、`setup/onboard/gateway` 子命令和 Web 工作台承担 operator 体验。
 - **Hermes 作为成长层参照**：持久记忆、检索、技能学习、训练样本缓冲、embedding 召回和 LoRA 准备作为一等能力持续演进。
 - **自进化必须可审计**：能力缺口先进入能力矩阵和 `yizutt evolve` 计划，自动执行必须后续显式接入测试、回滚、证据记录和人工/策略门禁，避免无约束自改代码。
+- **二进制包采用 launcher + 资源目录**：当前包提供原生 `bin/yizutt` 和 `bin/yizutt-runtime`，Python/Web 仍作为包内资源加载；这比单文件嵌入 Python 更稳，后续可再演进为完全自包含单文件。
 - **Worker 隔离机制**：每个本地 Worker 是独立子进程，有独立工作目录 `.yizutt/runtime/workers/<id>/`；可显式开启 `process`、`cgroup` 或 `container` sandbox profile；远程 Worker 由外部运行时管理；Runtime 任务状态以 append-only JSONL 写入 `.yizutt/runtime/tasks.jsonl`，启动恢复同样通过追加日志记录审计。
 - **内存数据非共享**：Worker 之间不直接共享内存状态，必要协作通过 Runtime 分配子任务。
 - **中文分词**：`memory.py` 写入时生成 tokens，查询时命中 `messages_tokens_fts`。
@@ -78,7 +82,7 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 1. **编排能力仍需深化**：已有最小 `plan_created` 子任务计划、持久任务日志、依赖感知子任务派发、重试、最大并发、队列深度限制、启动恢复/过期策略和准入 backpressure，但还没有优先级队列、延迟调度和完整生产队列语义。
 2. **生产隔离仍需加强**：已有工具级策略、审计、命令超时取消、精简环境、网络 host 白名单、可选 cgroup/container sandbox profile，但还没有跨平台系统级网络 namespace、加固容器镜像和集群级策略下发。
-3. **下一阶段重点**：当前明确任务队列已完成；产品方向已固定为 Codex 核心逻辑、OpenClaw Web/命令、Hermes 记忆/学习，并新增自进化能力矩阵；后续继续 N3 产品化版本线，优先做稳定配置文件、数据迁移、发布打包、operator 文档、优先级队列和生产可观测性。
+3. **下一阶段重点**：当前明确任务队列已完成；产品方向已固定为 Codex 核心逻辑、OpenClaw Web/命令、Hermes 记忆/学习，并新增自进化能力矩阵和当前宿主平台二进制包；后续继续 N3 产品化版本线，优先做跨平台 release artifact、稳定配置文件、数据迁移、operator 文档、优先级队列和生产可观测性。
 
 ## 六、当前任务队列
 
@@ -671,9 +675,23 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - README、中文说明和本上下文同步 CLI/Web 使用方式。
 - Python 编译、Rust workspace 检查、CLI/API smoke 通过。
 
+### N3-0.7 已完成：便携二进制打包
+
+**目标**：把 Yizutt 打成可分发的二进制程序包，让用户不用进入源码目录也能运行 `yizutt`。
+
+**完成情况**：新增 `crates/yizutt-launcher`，生成原生 `bin/yizutt` 启动器；启动器会定位包根目录，设置 `PYTHONPATH`、`RUNTIME_BIN`、`YIZUTT_RUNTIME_BIN`、`BUILD=0` 和 `YIZUTT_PROJECT_ROOT`，再调用现有 Python CLI。新增 `scripts/package_binary.sh`，会执行 release 构建，组装 `dist/yizutt-<version>-<target>/`，复制 `bin/yizutt`、`bin/yizutt-runtime`、Python 模块、Web 资源、examples、scripts、proto、README 和 LICENSE，并生成 `.tar.gz` 与 `.sha256`。当前已在 aarch64 Android/Termux 宿主生成 `dist/yizutt-0.1.0-aarch64-linux-android.tar.gz`。
+
+**验收标准**：
+- `scripts/package_binary.sh` 能完成 release 构建和 tar.gz/checksum 生成。
+- 包内 `bin/yizutt` 和 `bin/yizutt-runtime` 是原生 ELF 二进制。
+- 从仓库外路径执行包内 `bin/yizutt --help` 可用。
+- 从仓库外路径执行包内 `bin/yizutt --dry-run --no-build` 会解析到包内脚本和 Runtime。
+- README、中文说明和本上下文同步打包方式与限制。
+- Python 编译、Rust workspace 检查、release package smoke 通过。
+
 ### 当前任务状态
 
-截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步、N2-3.2 简化本地启动命令、N2-4 生产化隔离/远程 Worker/backpressure/embedding/LoRA 准备、N3-0.1 Codex 风格 Web 工作台、N3-0.2 全局 `yizutt` 启动命令、N3-0.3 `onboard`/`gateway` 产品子命令、N3-0.4 交互式 `yizutt setup` 初始化配置、N3-0.5 Codex/OpenClaw/Hermes 产品方向固化、N3-0.6 能力矩阵与自进化任务规划均已完成。下一版本线从 N3 开始，不再只按 demo 验收；下一步继续 N3-0 产品化基线的数据迁移、发布打包、operator 文档和自进化执行门禁。
+截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行、N2-3.1 深度测试与说明同步、N2-3.2 简化本地启动命令、N2-4 生产化隔离/远程 Worker/backpressure/embedding/LoRA 准备、N3-0.1 Codex 风格 Web 工作台、N3-0.2 全局 `yizutt` 启动命令、N3-0.3 `onboard`/`gateway` 产品子命令、N3-0.4 交互式 `yizutt setup` 初始化配置、N3-0.5 Codex/OpenClaw/Hermes 产品方向固化、N3-0.6 能力矩阵与自进化任务规划、N3-0.7 便携二进制打包均已完成。下一版本线从 N3 开始，不再只按 demo 验收；下一步继续 N3-0 产品化基线的数据迁移、跨平台 release artifact、operator 文档和自进化执行门禁。
 
 ## 七、常用开发命令
 
@@ -686,6 +704,9 @@ yizutt setup
 
 # 任意路径启动本地 mock 模型、Runtime 和 Web 工作台
 yizutt
+
+# 构建当前平台便携二进制包
+scripts/package_binary.sh
 
 # 查看 Codex/OpenClaw/Hermes/进化能力矩阵
 yizutt capabilities
