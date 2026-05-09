@@ -22,6 +22,7 @@ Yizutt AGI Runtime 正在从概念验证进入产品化的本地优先 Agent Run
 - 成功执行路径会保存成带草稿、replay 检查和 active 状态的 `SKILL.md` 技能文件。
 - `python -m yizutt_agi.real_loop` 可以不启动 Rust Runtime，直接跑一次“任务-记录-存技能”闭环。
 - Codex 风格本地 Web 工作台支持查看 Runtime 状态、Runtime 队列状态、提交任务并流式显示 trace、持久任务历史 replay、查看最近记忆和技能摘要，并支持多语言切换。
+- 全局 `yizutt` 命令可在任意路径启动本地 Runtime 和 Web 工作台，同时保留 `yizutt skill ...` 技能包管理。
 - 最小 Leader/Orchestrator 规划能力会为复杂任务生成结构化 `plan_created` trace 事件。
 - 工具执行带安全审计策略，支持路径白名单、命令白名单、命令沙箱限制和网络 host 白名单，默认拒绝写文件、执行命令和访问内部目录。
 - 最小 MCP stdio client 已作为受控 `mcp_call` executor 工具接入。
@@ -39,6 +40,7 @@ Yizutt AGI Runtime 正在从概念验证进入产品化的本地优先 Agent Run
 - `python/yizutt_agi/training.py` 可把 accepted 训练样本导出为 LoRA 准备工件。
 - `python/yizutt_agi/skills.py` 负责把技能保存为 `SKILL.md`。
 - `python/yizutt_agi/i18n.py` 负责统一解析全局语言短码、环境变量默认值和 CLI 入口后缀。
+- `python/yizutt_agi/cli.py` 是全局 `yizutt` 入口，负责启动和工具子命令分发。
 - `python/yizutt_agi/panel.py` 提供本地 Web 面板服务，把面板 API 代理到 Runtime CLI，保存面板任务历史，并通过 SSE 桥接流式任务输出。
 - `python/yizutt_agi/real_loop.py` 负责直接跑一次模型-记忆-技能闭环。
 - `python/yizutt_agi/client.py` 是 Python 调 Rust Runtime CLI 的简单客户端。
@@ -63,19 +65,19 @@ Rust 构建使用 vendored `protoc`，不需要系统预装 `protoc`。
 
 ## 快速运行
 
-一条命令启动完整无 API key 本地 demo：
+在任意路径用一条命令启动完整无 API key 本地 Runtime 和 Web 工作台：
 
-`./scripts/start_local_demo.sh`
+`yizutt`
 
-然后在浏览器打开 `http://127.0.0.1:50280`。脚本会启动确定性 mock 模型、Rust Runtime 和 Web 面板，日志写入 `.yizutt/local-demo/logs`，按 Ctrl-C 会同时停止这三个进程。
+然后在浏览器打开 `http://127.0.0.1:50280`。该命令会启动确定性 mock 模型、Rust Runtime 和 Web 工作台，日志写入 `.yizutt/local-demo/logs`，按 Ctrl-C 会同时停止这三个进程。`yizutt start` 是显式等价命令；`yizutt skill ...` 继续用于技能包管理。
 
 常用覆盖参数：
 
-`RECOVERY_MODE=resume ./scripts/start_local_demo.sh`
+`RECOVERY_MODE=resume yizutt`
 
-`PANEL_PORT=50880 RUNTIME_PORT=50800 MOCK_PORT=50890 ./scripts/start_local_demo.sh`
+`PANEL_PORT=50880 RUNTIME_PORT=50800 MOCK_PORT=50890 yizutt`
 
-`BUILD=0 ./scripts/start_local_demo.sh`
+`yizutt start --no-build`
 
 只手动启动 Runtime：
 
@@ -131,7 +133,7 @@ Runtime 启动后运行 Python demo：
 
 启动本地 demo：
 
-`./scripts/start_local_demo.sh`
+`yizutt`
 
 另开一个终端，提交一个使用工具的任务：
 
@@ -325,6 +327,7 @@ GitHub Actions 会在 push 到 `main` 和 pull request 时运行核心 CI 检查
 - `target/debug/yizutt-runtime submit`
 - 通过 OpenAI-compatible 本地代理执行 Python sidecar 真实模型调用
 - 本地 Web 工作台的状态、流式任务提交、持久任务历史 replay、记忆、技能 API 和多语言切换
+- 从仓库外路径执行全局 `yizutt` 启动检查，包括 `yizutt start --dry-run` 和临时端口 Web API smoke
 - 本地 Web 面板 `/api/submit-stream` SSE 桥接可实时显示 gRPC trace 输出
 - 本地 Web 面板持久任务历史列表和已保存 trace replay
 - 本地 Web 工作台 Runtime 队列视图和 CI smoke 覆盖 HTML、配置 API、历史 API、Runtime 任务 API

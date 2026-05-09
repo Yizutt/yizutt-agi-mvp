@@ -22,6 +22,7 @@ The current version still keeps a no-key local mock path for onboarding and smok
 - Skill persistence as `SKILL.md` files with draft, replay-check, and active states.
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
 - Codex-style local Web workbench for Runtime status, Runtime queue status, task submission with streaming trace output, persistent task history replay, recent memory, skill summaries, and language switching.
+- Global `yizutt` command starts the local Runtime and Web workbench from any directory, while preserving `yizutt skill ...` package management.
 - Minimal Leader/Orchestrator planning that emits structured `plan_created` trace events for complex tasks.
 - Audited tool policy with path allowlists, command allowlists, command sandbox limits, network host allowlists, and default denial for writes, commands, and internal directories.
 - Minimal MCP stdio client exposed as a gated `mcp_call` executor tool.
@@ -39,6 +40,7 @@ The current version still keeps a no-key local mock path for onboarding and smok
 - `python/yizutt_agi/training.py` exports accepted training examples into LoRA preparation artifacts.
 - `python/yizutt_agi/skills.py` stores reusable skills as `SKILL.md` files.
 - `python/yizutt_agi/i18n.py` resolves global language short codes, environment defaults, and CLI entrypoint suffixes.
+- `python/yizutt_agi/cli.py` is the global `yizutt` entrypoint for startup and utility subcommands.
 - `python/yizutt_agi/panel.py` serves the local Web panel, proxies panel API calls to the runtime CLI, stores panel task history, and bridges streaming task output over SSE.
 - `python/yizutt_agi/real_loop.py` runs one direct model-memory-skill loop without starting the Rust runtime.
 - `python/yizutt_agi/client.py` calls the Rust runtime CLI from Python.
@@ -61,19 +63,19 @@ The Rust build uses a vendored `protoc`, so a system `protoc` binary is not requ
 
 ## Quick Start
 
-Start the full no-key local demo with one command:
+Start the full no-key local runtime and Web workbench from any directory:
 
-`./scripts/start_local_demo.sh`
+`yizutt`
 
-Open `http://127.0.0.1:50280` in a browser. The script starts the deterministic mock model, Rust Runtime, and Web panel, writes logs to `.yizutt/local-demo/logs`, and stops all three processes when you press Ctrl-C.
+Open `http://127.0.0.1:50280` in a browser. The command starts the deterministic mock model, Rust Runtime, and Web workbench, writes logs to `.yizutt/local-demo/logs`, and stops all three processes when you press Ctrl-C. `yizutt start` is the explicit equivalent; `yizutt skill ...` remains available for skill package management.
 
 Useful overrides:
 
-`RECOVERY_MODE=resume ./scripts/start_local_demo.sh`
+`RECOVERY_MODE=resume yizutt`
 
-`PANEL_PORT=50880 RUNTIME_PORT=50800 MOCK_PORT=50890 ./scripts/start_local_demo.sh`
+`PANEL_PORT=50880 RUNTIME_PORT=50800 MOCK_PORT=50890 yizutt`
 
-`BUILD=0 ./scripts/start_local_demo.sh`
+`yizutt start --no-build`
 
 Manual runtime-only startup:
 
@@ -129,7 +131,7 @@ This flow needs no real API key. It starts a deterministic local model endpoint,
 
 Start the local demo:
 
-`./scripts/start_local_demo.sh`
+`yizutt`
 
 From another terminal, submit a tool-using task:
 
@@ -323,6 +325,7 @@ The current prototype has been run locally with:
 - `target/debug/yizutt-runtime submit`
 - Python sidecar execution through an OpenAI-compatible local proxy
 - Local Web workbench status, streaming task submission, memory, skill APIs, and language switching
+- Global `yizutt` startup from outside the repository, including `yizutt start --dry-run` and a temporary-port Web API smoke
 - Local Web panel `/api/submit-stream` SSE bridge for live gRPC trace output
 - Local Web panel persistent task history list and saved trace replay
 - Local Web workbench Runtime queue view and CI smoke check for HTML, config API, history API, and Runtime task API
