@@ -28,25 +28,15 @@ def compose_workflow(
 
 
 def discover_skill_chain(goal: str, store: SkillStore, max_skills: int = 5) -> list[dict[str, Any]]:
-    goal_terms = tokens(goal)
-    scored = []
-    for item in store.list_skills():
-        if item.get("status") not in {"active", "verified"}:
-            continue
-        text = " ".join([item["name"], item.get("description", ""), safe_read(item["path"])])
-        skill_terms = tokens(text)
-        overlap = goal_terms & skill_terms
-        score = len(overlap) / max(1, len(goal_terms))
-        if score > 0:
-            scored.append((score, len(overlap), item))
-    scored.sort(key=lambda row: (row[0], row[1], row[2]["name"]), reverse=True)
     chain = []
-    for score, _, item in scored[:max_skills]:
+    for item in store.search_skills(goal, limit=max_skills):
         chain.append({
             "name": item["name"],
             "description": item.get("description", ""),
             "path": item["path"],
-            "score": round(score, 3),
+            "score": item["score"],
+            "matched_terms": item.get("matched_terms", []),
+            "step_count": item.get("step_count", 0),
         })
     return chain
 
@@ -72,6 +62,8 @@ def render_workflow(goal: str, workflow_name: str, chain: list[dict[str, Any]]) 
                 f"{idx}. {skill['name']}",
                 f"   - 描述: {skill['description']}",
                 f"   - 匹配分: {skill['score']}",
+                f"   - 命中词: {', '.join(skill.get('matched_terms', []))}",
+                f"   - 步骤数: {skill.get('step_count', 0)}",
                 f"   - 路径: {skill['path']}",
             ]
         )
@@ -86,17 +78,6 @@ def render_workflow(goal: str, workflow_name: str, chain: list[dict[str, Any]]) 
         ]
     )
     return "\n".join(lines) + "\n"
-
-
-def tokens(text: str) -> set[str]:
-    return set(re.findall(r"[a-zA-Z0-9_\u4e00-\u9fff]+", text.lower()))
-
-
-def safe_read(path: str) -> str:
-    try:
-        return Path(path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
 
 
 def safe_workflow_name(goal: str) -> str:

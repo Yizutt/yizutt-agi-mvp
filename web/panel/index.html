@@ -227,6 +227,18 @@
       gap: 10px;
       align-items: center;
       font-weight: 650;
+      flex-wrap: wrap;
+    }
+
+    .item-title button {
+      min-height: 30px;
+      padding: 0 10px;
+      font-size: 12px;
+    }
+
+    .item-title span {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
     .meta {
@@ -375,6 +387,26 @@
           </div>
         </div>
       </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2 id="historyTitle">任务历史</h2>
+          <span class="badge" id="historyBadge">未加载</span>
+        </div>
+        <div class="panel-body">
+          <div class="list" id="historyList"></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2 id="runtimeTasksTitle">Runtime 队列</h2>
+          <span class="badge" id="runtimeTasksBadge">未加载</span>
+        </div>
+        <div class="panel-body">
+          <div class="list" id="runtimeTasksList"></div>
+        </div>
+      </section>
     </main>
   </div>
 
@@ -404,6 +436,7 @@
           memoryTitle: "最近记忆",
           notLoaded: "未加载",
           skillsTitle: "技能摘要",
+          historyTitle: "任务历史",
           checking: "检查中",
           workersCount: "{count} 个 Worker",
           noWorkerTitle: "无 Worker",
@@ -423,6 +456,20 @@
           skillsEmpty: "技能目录为空。",
           skillsMissing: "还没有创建技能目录。",
           skillsReadFailed: "技能读取失败",
+          historyCount: "{count} 次",
+          noHistoryTitle: "暂无任务历史",
+          historyEmpty: "还没有保存过面板任务。",
+          historyMissing: "还没有创建任务历史数据库。",
+          historyReadFailed: "任务历史读取失败",
+          replayButton: "回放",
+          replayLoaded: "已载入历史",
+          historyMeta: "{time} · {session} · {status} · {count} 行 trace",
+          runtimeTasksTitle: "Runtime 队列",
+          runtimeTasksCount: "{count} 个任务",
+          runtimeTasksEmpty: "Runtime 队列为空。",
+          runtimeTasksMissing: "还没有创建 Runtime 任务日志。",
+          runtimeTasksReadFailed: "Runtime 队列读取失败",
+          runtimeTasksMeta: "{time} · {kind} · {session} · {status}",
           taskRequired: "请先输入任务描述。",
           running: "执行中",
           taskSubmitted: "任务已提交，等待 Runtime 返回。",
@@ -456,6 +503,7 @@
           memoryTitle: "最近記憶",
           notLoaded: "未載入",
           skillsTitle: "技能摘要",
+          historyTitle: "任務歷史",
           checking: "檢查中",
           workersCount: "{count} 個 Worker",
           noWorkerTitle: "無 Worker",
@@ -475,6 +523,14 @@
           skillsEmpty: "技能目錄為空。",
           skillsMissing: "尚未建立技能目錄。",
           skillsReadFailed: "技能讀取失敗",
+          historyCount: "{count} 次",
+          noHistoryTitle: "暫無任務歷史",
+          historyEmpty: "尚未儲存面板任務。",
+          historyMissing: "尚未建立任務歷史資料庫。",
+          historyReadFailed: "任務歷史讀取失敗",
+          replayButton: "回放",
+          replayLoaded: "已載入歷史",
+          historyMeta: "{time} · {session} · {status} · {count} 行 trace",
           taskRequired: "請先輸入任務描述。",
           running: "執行中",
           taskSubmitted: "任務已提交，等待 Runtime 返回。",
@@ -508,6 +564,7 @@
           memoryTitle: "Recent Memory",
           notLoaded: "Not loaded",
           skillsTitle: "Skill Summary",
+          historyTitle: "Task History",
           checking: "Checking",
           workersCount: "{count} workers",
           noWorkerTitle: "No workers",
@@ -527,6 +584,20 @@
           skillsEmpty: "The skills directory is empty.",
           skillsMissing: "Skills directory has not been created yet.",
           skillsReadFailed: "Skill read failed",
+          historyCount: "{count} runs",
+          noHistoryTitle: "No task history",
+          historyEmpty: "No panel task has been saved yet.",
+          historyMissing: "Task history database has not been created yet.",
+          historyReadFailed: "Task history read failed",
+          replayButton: "Replay",
+          replayLoaded: "History loaded",
+          historyMeta: "{time} · {session} · {status} · {count} trace lines",
+          runtimeTasksTitle: "Runtime Queue",
+          runtimeTasksCount: "{count} tasks",
+          runtimeTasksEmpty: "Runtime queue is empty.",
+          runtimeTasksMissing: "Runtime task log has not been created yet.",
+          runtimeTasksReadFailed: "Runtime queue read failed",
+          runtimeTasksMeta: "{time} · {kind} · {session} · {status}",
           taskRequired: "Enter a task description first.",
           running: "Running",
           taskSubmitted: "Task submitted. Waiting for Runtime.",
@@ -560,6 +631,7 @@
           memoryTitle: "最近のメモリ",
           notLoaded: "未読み込み",
           skillsTitle: "スキル概要",
+          historyTitle: "タスク履歴",
           checking: "確認中",
           workersCount: "{count} Worker",
           noWorkerTitle: "Worker なし",
@@ -579,6 +651,14 @@
           skillsEmpty: "スキルディレクトリは空です。",
           skillsMissing: "スキルディレクトリはまだ作成されていません。",
           skillsReadFailed: "スキルの読み取りに失敗しました",
+          historyCount: "{count} 件",
+          noHistoryTitle: "タスク履歴なし",
+          historyEmpty: "保存されたパネルタスクはまだありません。",
+          historyMissing: "タスク履歴データベースはまだ作成されていません。",
+          historyReadFailed: "タスク履歴の読み取りに失敗しました",
+          replayButton: "再生",
+          replayLoaded: "履歴を読み込みました",
+          historyMeta: "{time} · {session} · {status} · trace {count} 行",
           taskRequired: "先にタスク説明を入力してください。",
           running: "実行中",
           taskSubmitted: "タスクを送信しました。Runtime の応答を待っています。",
@@ -612,6 +692,7 @@
           memoryTitle: "최근 메모리",
           notLoaded: "로드 안 됨",
           skillsTitle: "스킬 요약",
+          historyTitle: "작업 기록",
           checking: "확인 중",
           workersCount: "Worker {count}개",
           noWorkerTitle: "Worker 없음",
@@ -631,6 +712,14 @@
           skillsEmpty: "스킬 디렉터리가 비어 있습니다.",
           skillsMissing: "스킬 디렉터리가 아직 생성되지 않았습니다.",
           skillsReadFailed: "스킬 읽기 실패",
+          historyCount: "{count}개",
+          noHistoryTitle: "작업 기록 없음",
+          historyEmpty: "저장된 패널 작업이 아직 없습니다.",
+          historyMissing: "작업 기록 데이터베이스가 아직 생성되지 않았습니다.",
+          historyReadFailed: "작업 기록 읽기 실패",
+          replayButton: "재생",
+          replayLoaded: "기록 로드됨",
+          historyMeta: "{time} · {session} · {status} · trace {count}줄",
           taskRequired: "먼저 작업 설명을 입력하세요.",
           running: "실행 중",
           taskSubmitted: "작업을 제출했습니다. Runtime 응답을 기다립니다.",
@@ -664,6 +753,7 @@
           memoryTitle: "الذاكرة الحديثة",
           notLoaded: "لم يتم التحميل",
           skillsTitle: "ملخص المهارات",
+          historyTitle: "سجل المهام",
           checking: "جار الفحص",
           workersCount: "{count} عامل",
           noWorkerTitle: "لا يوجد عمال",
@@ -683,6 +773,14 @@
           skillsEmpty: "مجلد المهارات فارغ.",
           skillsMissing: "لم يتم إنشاء مجلد المهارات بعد.",
           skillsReadFailed: "فشل قراءة المهارات",
+          historyCount: "{count} تشغيل",
+          noHistoryTitle: "لا يوجد سجل مهام",
+          historyEmpty: "لم يتم حفظ أي مهمة من اللوحة بعد.",
+          historyMissing: "لم يتم إنشاء قاعدة سجل المهام بعد.",
+          historyReadFailed: "فشل قراءة سجل المهام",
+          replayButton: "إعادة العرض",
+          replayLoaded: "تم تحميل السجل",
+          historyMeta: "{time} · {session} · {status} · {count} سطر trace",
           taskRequired: "أدخل وصف المهمة أولاً.",
           running: "قيد التنفيذ",
           taskSubmitted: "تم إرسال المهمة. بانتظار Runtime.",
@@ -716,6 +814,7 @@
           memoryTitle: "Последняя память",
           notLoaded: "Не загружено",
           skillsTitle: "Сводка навыков",
+          historyTitle: "История задач",
           checking: "Проверка",
           workersCount: "Worker: {count}",
           noWorkerTitle: "Нет Worker",
@@ -735,6 +834,14 @@
           skillsEmpty: "Каталог навыков пуст.",
           skillsMissing: "Каталог навыков еще не создан.",
           skillsReadFailed: "Не удалось прочитать навыки",
+          historyCount: "{count} запусков",
+          noHistoryTitle: "Истории задач нет",
+          historyEmpty: "Сохраненных задач панели пока нет.",
+          historyMissing: "База истории задач еще не создана.",
+          historyReadFailed: "Не удалось прочитать историю задач",
+          replayButton: "Повтор",
+          replayLoaded: "История загружена",
+          historyMeta: "{time} · {session} · {status} · строк trace: {count}",
           taskRequired: "Сначала введите описание задачи.",
           running: "Выполняется",
           taskSubmitted: "Задача отправлена. Ожидание Runtime.",
@@ -773,7 +880,13 @@
       memoryList: document.querySelector("#memoryList"),
       skillsTitle: document.querySelector("#skillsTitle"),
       skillsBadge: document.querySelector("#skillsBadge"),
-      skillsList: document.querySelector("#skillsList")
+      skillsList: document.querySelector("#skillsList"),
+      historyTitle: document.querySelector("#historyTitle"),
+      historyBadge: document.querySelector("#historyBadge"),
+      historyList: document.querySelector("#historyList"),
+      runtimeTasksTitle: document.querySelector("#runtimeTasksTitle"),
+      runtimeTasksBadge: document.querySelector("#runtimeTasksBadge"),
+      runtimeTasksList: document.querySelector("#runtimeTasksList")
     };
 
     const savedRuntime = localStorage.getItem("yizutt.runtimeAddr");
@@ -850,6 +963,10 @@
       setBadge(els.memoryBadge, t("notLoaded"));
       els.skillsTitle.textContent = t("skillsTitle");
       setBadge(els.skillsBadge, t("notLoaded"));
+      els.historyTitle.textContent = t("historyTitle");
+      setBadge(els.historyBadge, t("notLoaded"));
+      els.runtimeTasksTitle.textContent = t("runtimeTasksTitle");
+      setBadge(els.runtimeTasksBadge, t("notLoaded"));
       if (els.statusLine.dataset.loaded) {
         els.statusLine.textContent = t("statusConnected", {path: els.statusLine.dataset.memoryPath || ""});
       } else {
@@ -891,6 +1008,38 @@
         <div class="meta">${escapeHtml(meta)}</div>
         ${safeBody}
       `;
+      return node;
+    }
+
+    function historyItem(run) {
+      const node = document.createElement("div");
+      node.className = "item";
+      const title = document.createElement("div");
+      title.className = "item-title";
+      const name = document.createElement("span");
+      name.textContent = run.task || `#${run.id}`;
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "secondary";
+      button.textContent = t("replayButton");
+      button.addEventListener("click", () => loadHistoryRun(run.id));
+      title.append(name, button);
+
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      meta.textContent = t("historyMeta", {
+        time: formatTime(run.started_at),
+        session: run.session_id,
+        status: run.status,
+        count: run.trace_count
+      });
+
+      node.append(title, meta);
+      if (run.trace_summary) {
+        const body = document.createElement("pre");
+        body.textContent = run.trace_summary;
+        node.append(body);
+      }
       return node;
     }
 
@@ -997,8 +1146,52 @@
       }
     }
 
+    async function refreshHistory() {
+      els.historyList.innerHTML = "";
+      try {
+        const data = await api("/api/history?limit=12");
+        const items = data.items || [];
+        setBadge(els.historyBadge, t("historyCount", {count: items.length}), data.exists ? "ok" : "warn");
+        if (!items.length) {
+          els.historyList.append(item(t("noHistoryTitle"), data.exists ? t("historyEmpty") : t("historyMissing")));
+          return;
+        }
+        for (const run of items) {
+          els.historyList.append(historyItem(run));
+        }
+      } catch (err) {
+        setBadge(els.historyBadge, t("error"), "error");
+        els.historyList.append(item(t("historyReadFailed"), err.message));
+      }
+    }
+
+    async function refreshRuntimeTasks() {
+      els.runtimeTasksList.innerHTML = "";
+      try {
+        const data = await api("/api/runtime-tasks?limit=12");
+        const items = data.items || [];
+        setBadge(els.runtimeTasksBadge, t("runtimeTasksCount", {count: items.length}), data.exists ? "ok" : "warn");
+        if (!items.length) {
+          els.runtimeTasksList.append(item(t("runtimeTasksTitle"), data.exists ? t("runtimeTasksEmpty") : t("runtimeTasksMissing")));
+          return;
+        }
+        for (const task of items) {
+          const meta = t("runtimeTasksMeta", {
+            time: formatTimeIso(task.timestamp),
+            kind: task.kind || "task",
+            session: task.session_id || "",
+            status: task.status || ""
+          });
+          els.runtimeTasksList.append(item(task.task || task.task_id, meta, task.output || task.trace_summary || ""));
+        }
+      } catch (err) {
+        setBadge(els.runtimeTasksBadge, t("error"), "error");
+        els.runtimeTasksList.append(item(t("runtimeTasksReadFailed"), err.message));
+      }
+    }
+
     async function refreshAll() {
-      await Promise.allSettled([refreshStatus(), refreshMemory(), refreshSkills()]);
+      await Promise.allSettled([refreshStatus(), refreshMemory(), refreshSkills(), refreshHistory(), refreshRuntimeTasks()]);
     }
 
     async function submitTask() {
@@ -1024,7 +1217,7 @@
         } else {
           setBadge(els.submitState, t("complete"), "ok");
         }
-        await Promise.allSettled([refreshStatus(), refreshMemory(), refreshSkills()]);
+        await Promise.allSettled([refreshStatus(), refreshMemory(), refreshSkills(), refreshHistory(), refreshRuntimeTasks()]);
       } catch (err) {
         setBadge(els.submitState, t("failed"), "error");
         appendOutputLine(`\n${t("error")}: ${err.message}`);
@@ -1076,6 +1269,21 @@
       return finalEvent;
     }
 
+    async function loadHistoryRun(id) {
+      const data = await api(`/api/history/run?id=${encodeURIComponent(id)}`);
+      const run = data.item;
+      els.runtimeAddr.value = run.runtime_addr || runtimeAddr();
+      els.sessionId.value = run.session_id || "panel";
+      els.taskInput.value = run.task || "";
+      els.contextJson.value = run.context_json || "{}";
+      els.taskOutput.dataset.hasResult = "true";
+      els.taskOutput.textContent = "";
+      setBadge(els.submitState, t("replayLoaded"), run.ok === false ? "error" : "ok");
+      for (const event of run.trace || []) {
+        handleStreamEvent(event);
+      }
+    }
+
     function parseSseEvent(block) {
       const lines = block.split("\n");
       const dataLines = lines
@@ -1119,6 +1327,24 @@
       const box = els.taskOutput.closest(".output");
       if (box) {
         box.scrollTop = box.scrollHeight;
+      }
+    }
+
+    function formatTimeIso(value) {
+      if (!value) {
+        return "";
+      }
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) {
+        return String(value);
+      }
+      try {
+        return new Intl.DateTimeFormat(LANGUAGES[currentLanguage].htmlLang, {
+          dateStyle: "short",
+          timeStyle: "medium"
+        }).format(date);
+      } catch (_) {
+        return date.toLocaleString();
       }
     }
 

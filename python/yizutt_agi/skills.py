@@ -125,17 +125,38 @@ class SkillStore:
         return path.read_text(encoding="utf-8")
 
     def skill_context(self, query: str) -> str:
-        terms = set(re.findall(r"[a-zA-Z0-9_\u4e00-\u9fff]+", query.lower()))
+        return "\n".join(
+            f"{item['name']}: {item['description']} (score: {item['score']:.3f})"
+            for item in self.search_skills(query, limit=5)
+        )
+
+    def search_skills(self, query: str, limit: int = 5) -> list[dict]:
+        query_terms = self._tokens(query)
         matches = []
         for item in self.list_skills():
             if item.get("status") not in ACTIVE_SKILL_STATUSES:
                 continue
-            haystack = f"{item['name']} {item['description']}".lower()
-            score = sum(1 for term in terms if term in haystack)
-            if score:
-                matches.append((score, item))
-        matches.sort(key=lambda pair: pair[0], reverse=True)
-        return "\n".join(f"{item['name']}: {item['description']}" for _, item in matches[:5])
+            text = Path(item["path"]).read_text(encoding="utf-8", errors="replace")
+            skill_terms = self._tokens(" ".join([item["name"], item.get("description", ""), text]))
+            if not query_terms or not skill_terms:
+                continue
+            overlap = query_terms & skill_terms
+            if not overlap:
+                continue
+            coverage = len(overlap) / max(1, len(query_terms))
+            density = len(overlap) / max(1, len(skill_terms))
+            exact_bonus = 0.15 if query.lower().strip() and query.lower().strip() in text.lower() else 0.0
+            recency = self._safe_int(item.get("updated_at")) / max(1, int(time.time()))
+            score = (coverage * 0.7) + (density * 0.15) + exact_bonus + min(0.1, recency * 0.1)
+            enriched = {
+                **item,
+                "score": round(score, 3),
+                "matched_terms": sorted(overlap)[:12],
+                "step_count": len(self._steps_from_text(text)),
+            }
+            matches.append(enriched)
+        matches.sort(key=lambda item: (item["score"], item.get("updated_at", ""), item["name"]), reverse=True)
+        return matches[:limit]
 
     def _find_similar_skill(self, safe_name: str, description: str, steps: list[str]) -> dict | None:
         candidate_text = " ".join([safe_name, description, *steps])
@@ -264,7 +285,18 @@ class SkillStore:
 
     @staticmethod
     def _tokens(text: str) -> set[str]:
-        return set(re.findall(r"[a-zA-Z0-9_\u4e00-\u9fff]+", text.lower()))
+        tokens: set[str] = set()
+        for part in re.findall(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]+", text.lower()):
+            if re.fullmatch(r"[\u4e00-\u9fff]+", part):
+                tokens.add(part)
+                chars = list(part)
+                tokens.update(chars)
+                for size in range(2, 5):
+                    for idx in range(0, max(0, len(chars) - size + 1)):
+                        tokens.add("".join(chars[idx : idx + size]))
+            else:
+                tokens.add(part)
+        return {token for token in tokens if token}
 
     @staticmethod
     def _similarity(left: set[str], right: set[str]) -> float:
@@ -298,3 +330,10 @@ class SkillStore:
             if line.startswith(f"{key}:"):
                 return line.split(":", 1)[1].strip()
         return ""
+
+    @staticmethod
+    def _safe_int(value: object) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return 0

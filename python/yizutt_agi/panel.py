@@ -27,8 +27,10 @@ class PanelConfig:
     runtime_bin: str
     project_root: Path
     web_root: Path
+    runtime_home: Path
     memory_path: Path
     skills_root: Path
+    history_path: Path
     cli_timeout_secs: int
     default_lang: str
 
@@ -39,9 +41,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=50280)
     parser.add_argument("--runtime-addr", default=os.getenv("YIZUTT_RUNTIME_ADDR", DEFAULT_RUNTIME_ADDR))
     parser.add_argument("--runtime-bin", default=os.getenv("YIZUTT_RUNTIME_BIN", "target/debug/yizutt-runtime"))
+    parser.add_argument("--runtime-home", default=os.getenv("YIZUTT_RUNTIME_HOME", ""))
     parser.add_argument("--project-root", default=os.getenv("YIZUTT_PROJECT_ROOT", ""))
     parser.add_argument("--memory-path", default=os.getenv("YIZUTT_MEMORY_PATH", ""))
     parser.add_argument("--skills-root", default=os.getenv("YIZUTT_SKILLS_ROOT", ""))
+    parser.add_argument("--history-path", default=os.getenv("YIZUTT_PANEL_HISTORY_PATH", ""))
     parser.add_argument("--cli-timeout-secs", type=int, default=180)
     parser.add_argument(
         "--lang",
@@ -58,8 +62,10 @@ def main(argv: list[str] | None = None) -> int:
         runtime_bin=resolve_runtime_bin(project_root, args.runtime_bin),
         project_root=project_root,
         web_root=project_root / "web" / "panel",
+        runtime_home=Path(args.runtime_home).expanduser() if args.runtime_home else project_root / ".yizutt" / "runtime",
         memory_path=Path(args.memory_path).expanduser() if args.memory_path else project_root / ".yizutt" / "memory" / "work.sqlite3",
         skills_root=Path(args.skills_root).expanduser() if args.skills_root else project_root / ".yizutt" / "skills",
+        history_path=Path(args.history_path).expanduser() if args.history_path else project_root / ".yizutt" / "panel" / "history.sqlite3",
         cli_timeout_secs=args.cli_timeout_secs,
         default_lang=resolve_language(args.lang, argv0=sys.argv[0]),
     )
@@ -101,6 +107,15 @@ def make_handler(config: PanelConfig) -> type[BaseHTTPRequestHandler]:
                 return
             if parsed.path == "/api/skills":
                 self.send_json(lambda: api_skills(config, parsed.query))
+                return
+            if parsed.path == "/api/history":
+                self.send_json(lambda: api_history(config, parsed.query))
+                return
+            if parsed.path == "/api/history/run":
+                self.send_json(lambda: api_history_run(config, parsed.query))
+                return
+            if parsed.path == "/api/runtime-tasks":
+                self.send_json(lambda: api_runtime_tasks(config, parsed.query))
                 return
             if parsed.path == "/api/config":
                 self.send_json(lambda: api_config(config))
@@ -191,8 +206,10 @@ def api_config(config: PanelConfig) -> dict[str, Any]:
         "ok": True,
         "runtime_addr": config.runtime_addr,
         "runtime_bin": config.runtime_bin,
+        "runtime_home": str(config.runtime_home),
         "memory_path": str(config.memory_path),
         "skills_root": str(config.skills_root),
+        "history_path": str(config.history_path),
         "default_language": config.default_lang,
         "supported_languages": list(SUPPORTED_LANGUAGE_CODES),
     }
@@ -216,22 +233,46 @@ def api_submit(config: PanelConfig, payload: dict[str, Any]) -> dict[str, Any]:
     runtime_addr = str(payload.get("runtime_addr") or config.runtime_addr)
     session_id = str(payload.get("session_id") or "panel")
     context_json = normalize_context_json(payload.get("context_json"), payload.get("context"))
-    reply = run_runtime_json(
+    run_id = history_start_run(config, runtime_addr, session_id, task, context_json)
+    try:
+        reply = run_runtime_json(
+            config,
+            [
+                "submit",
+                "--addr",
+                runtime_addr,
+                "--session",
+                session_id,
+                "--task",
+                task,
+                "--context-json",
+                context_json,
+            ],
+        )
+    except Exception as exc:
+        history_finish_run(
+            config,
+            run_id,
+            status="error",
+            ok=False,
+            exit_code=None,
+            stderr=str(exc),
+            trace_events=[{"type": "error", "error": str(exc)}],
+        )
+        raise
+    trace_events = [{"type": "reply", "reply": reply}]
+    history_finish_run(
         config,
-        [
-            "submit",
-            "--addr",
-            runtime_addr,
-            "--session",
-            session_id,
-            "--task",
-            task,
-            "--context-json",
-            context_json,
-        ],
+        run_id,
+        status="completed",
+        ok=True,
+        exit_code=0,
+        stderr="",
+        trace_events=trace_events,
     )
     return {
         "ok": True,
+        "run_id": run_id,
         "runtime_addr": runtime_addr,
         "session_id": session_id,
         "reply": reply,
@@ -260,12 +301,17 @@ def api_submit_stream(config: PanelConfig, payload: dict[str, Any]) -> Any:
         context_json,
     ]
     started_at = int(time.time())
-    yield {
+    run_id = history_start_run(config, runtime_addr, session_id, task, context_json, started_at=started_at)
+    trace_events = []
+    started_event = {
         "type": "started",
+        "run_id": run_id,
         "runtime_addr": runtime_addr,
         "session_id": session_id,
         "started_at": started_at,
     }
+    trace_events.append(started_event)
+    yield started_event
     process = subprocess.Popen(
         args,
         cwd=config.project_root,
@@ -276,19 +322,44 @@ def api_submit_stream(config: PanelConfig, payload: dict[str, Any]) -> Any:
     try:
         assert process.stdout is not None
         for line in process.stdout:
-            yield {"type": "line", "text": line.rstrip("\n")}
+            event = {"type": "line", "text": line.rstrip("\n")}
+            trace_events.append(event)
+            yield event
         stderr = process.stderr.read() if process.stderr else ""
         code = process.wait(timeout=5)
-    except Exception:
+    except Exception as exc:
         process.kill()
+        error_event = {"type": "error", "error": str(exc)}
+        trace_events.append(error_event)
+        history_finish_run(
+            config,
+            run_id,
+            status="error",
+            ok=False,
+            exit_code=None,
+            stderr=str(exc),
+            trace_events=trace_events,
+        )
         raise
-    yield {
+    finished_event = {
         "type": "finished",
         "ok": code == 0,
         "exit_code": code,
         "stderr": stderr.strip(),
         "completed_at": int(time.time()),
     }
+    trace_events.append(finished_event)
+    history_finish_run(
+        config,
+        run_id,
+        status="completed" if code == 0 else "failed",
+        ok=code == 0,
+        exit_code=code,
+        stderr=stderr.strip(),
+        trace_events=trace_events,
+        completed_at=finished_event["completed_at"],
+    )
+    yield finished_event
 
 
 def api_memory(config: PanelConfig, query: str) -> dict[str, Any]:
@@ -344,6 +415,78 @@ def api_skills(config: PanelConfig, query: str) -> dict[str, Any]:
     }
 
 
+def api_history(config: PanelConfig, query: str) -> dict[str, Any]:
+    limit = clamp_int(query_value(query, "limit"), default=20, min_value=1, max_value=100)
+    if not config.history_path.exists():
+        return {"ok": True, "exists": False, "path": str(config.history_path), "items": []}
+
+    conn = sqlite3.connect(f"file:{config.history_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        rows = conn.execute(
+            """
+            select id, session_id, runtime_addr, task, context_json, status, ok,
+                   exit_code, trace_json, trace_summary, stderr, started_at,
+                   completed_at, updated_at
+            from panel_task_runs
+            order by started_at desc, id desc
+            limit ?
+            """,
+            (limit,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        "ok": True,
+        "exists": True,
+        "path": str(config.history_path),
+        "items": [history_row_to_dict(row, include_trace=False) for row in rows],
+    }
+
+
+def api_history_run(config: PanelConfig, query: str) -> dict[str, Any]:
+    raw_id = query_value(query, "id")
+    try:
+        run_id = int(raw_id)
+    except ValueError:
+        return {"ok": False, "error": "history run id is required"}
+    if not config.history_path.exists():
+        return {"ok": False, "error": "history database has not been created"}
+
+    conn = sqlite3.connect(f"file:{config.history_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        row = conn.execute(
+            """
+            select id, session_id, runtime_addr, task, context_json, status, ok,
+                   exit_code, trace_json, trace_summary, stderr, started_at,
+                   completed_at, updated_at
+            from panel_task_runs
+            where id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return {"ok": False, "error": "history item not found"}
+    return {
+        "ok": True,
+        "exists": True,
+        "path": str(config.history_path),
+        "item": history_row_to_dict(row, include_trace=True),
+    }
+
+
+def api_runtime_tasks(config: PanelConfig, query: str) -> dict[str, Any]:
+    limit = clamp_int(query_value(query, "limit"), default=20, min_value=1, max_value=100)
+    path = config.runtime_home / "tasks.jsonl"
+    if not path.exists():
+        return {"ok": True, "exists": False, "path": str(path), "items": []}
+    items = run_runtime_json(config, ["tasks", "--home", str(config.runtime_home), "--limit", str(limit)])
+    return {"ok": True, "exists": True, "path": str(path), "items": items}
+
+
 def run_runtime_json(config: PanelConfig, args: list[str]) -> Any:
     completed = subprocess.run(
         [config.runtime_bin, *args],
@@ -373,6 +516,117 @@ def normalize_context_json(context_json: Any, context: Any) -> str:
     return "{}"
 
 
+def init_history_db(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute(
+            """
+            create table if not exists panel_task_runs(
+                id integer primary key autoincrement,
+                session_id text not null,
+                runtime_addr text not null,
+                task text not null,
+                context_json text not null,
+                status text not null,
+                ok integer,
+                exit_code integer,
+                trace_json text not null default '[]',
+                trace_summary text not null default '',
+                stderr text not null default '',
+                started_at integer not null,
+                completed_at integer,
+                updated_at integer not null
+            )
+            """
+        )
+        conn.execute("create index if not exists panel_task_runs_started_idx on panel_task_runs(started_at desc)")
+        conn.execute("create index if not exists panel_task_runs_session_idx on panel_task_runs(session_id)")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def history_start_run(
+    config: PanelConfig,
+    runtime_addr: str,
+    session_id: str,
+    task: str,
+    context_json: str,
+    started_at: int | None = None,
+) -> int:
+    init_history_db(config.history_path)
+    now = int(time.time()) if started_at is None else started_at
+    conn = sqlite3.connect(config.history_path)
+    try:
+        cursor = conn.execute(
+            """
+            insert into panel_task_runs(
+                session_id, runtime_addr, task, context_json, status, trace_json,
+                started_at, updated_at
+            )
+            values (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (session_id, runtime_addr, task, context_json, "running", "[]", now, now),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+    finally:
+        conn.close()
+
+
+def history_finish_run(
+    config: PanelConfig,
+    run_id: int,
+    status: str,
+    ok: bool,
+    exit_code: int | None,
+    stderr: str,
+    trace_events: list[dict[str, Any]],
+    completed_at: int | None = None,
+) -> None:
+    init_history_db(config.history_path)
+    now = int(time.time()) if completed_at is None else completed_at
+    trace_json = json.dumps(trace_events, ensure_ascii=False)
+    conn = sqlite3.connect(config.history_path)
+    try:
+        conn.execute(
+            """
+            update panel_task_runs
+            set status = ?, ok = ?, exit_code = ?, trace_json = ?,
+                trace_summary = ?, stderr = ?, completed_at = ?, updated_at = ?
+            where id = ?
+            """,
+            (
+                status,
+                1 if ok else 0,
+                exit_code,
+                trace_json,
+                summarize_trace(trace_events, stderr),
+                stderr,
+                now,
+                now,
+                run_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def summarize_trace(trace_events: list[dict[str, Any]], stderr: str = "") -> str:
+    line_texts = [str(event.get("text") or "") for event in trace_events if event.get("type") == "line" and event.get("text")]
+    if line_texts:
+        return truncate("\n".join(line_texts[-4:]), 1000)
+    reply_events = [event for event in trace_events if event.get("type") == "reply"]
+    if reply_events:
+        return truncate(json.dumps(reply_events[-1].get("reply"), ensure_ascii=False), 1000)
+    error_events = [str(event.get("error") or "") for event in trace_events if event.get("type") == "error"]
+    if error_events:
+        return truncate(error_events[-1], 1000)
+    return truncate(stderr, 1000) if stderr else ""
+
+
 def memory_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     meta = {}
     try:
@@ -387,6 +641,33 @@ def memory_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
         "meta": meta,
         "created_at": row["created_at"],
     }
+
+
+def history_row_to_dict(row: sqlite3.Row, include_trace: bool) -> dict[str, Any]:
+    trace_events = []
+    try:
+        trace_events = json.loads(row["trace_json"] or "[]")
+    except json.JSONDecodeError:
+        trace_events = [{"type": "error", "error": "stored trace_json is invalid"}]
+    item = {
+        "id": row["id"],
+        "session_id": row["session_id"],
+        "runtime_addr": row["runtime_addr"],
+        "task": row["task"] if include_trace else truncate(row["task"], 300),
+        "context_json": row["context_json"],
+        "status": row["status"],
+        "ok": None if row["ok"] is None else bool(row["ok"]),
+        "exit_code": row["exit_code"],
+        "trace_count": len(trace_events) if isinstance(trace_events, list) else 0,
+        "trace_summary": row["trace_summary"],
+        "stderr": row["stderr"],
+        "started_at": row["started_at"],
+        "completed_at": row["completed_at"],
+        "updated_at": row["updated_at"],
+    }
+    if include_trace:
+        item["trace"] = trace_events if isinstance(trace_events, list) else []
+    return item
 
 
 def query_value(query: str, key: str) -> str:

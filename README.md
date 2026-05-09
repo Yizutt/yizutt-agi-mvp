@@ -14,15 +14,16 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - Server-streaming trace API for observing task events while a worker is running.
 - WorkerPool with basic dynamic scale-up and active worker/sidecar health checks.
 - `clap` based CLI with explicit `run`, `submit`, and `status` commands.
+- Durable Runtime task log with `tasks` status lookup and parallel subtask dispatch for saved plans.
 - Python TaskExecutor sidecar launched by Rust workers for real task execution.
 - Model gateway adapters for OpenAI, Anthropic, OpenAI-compatible local proxies, and a placeholder local endpoint.
-- SQLite FTS5 working memory with tokenized search, SQLite graph memory, and sparse vector recall.
+- SQLite FTS5 working memory with tokenized search, ranked graph reasoning context, and sparse vector recall.
 - Training data buffer that scores successful traces for future fine-tuning datasets without starting training jobs.
 - Skill persistence as `SKILL.md` files with draft, replay-check, and active states.
 - Real task-memory-skill loop through `python -m yizutt_agi.real_loop`.
-- Local Web panel for Runtime status, task submission with streaming trace output, recent memory, skill summaries, and language switching.
+- Local Web panel for Runtime status, Runtime queue status, task submission with streaming trace output, persistent task history replay, recent memory, skill summaries, and language switching.
 - Minimal Leader/Orchestrator planning that emits structured `plan_created` trace events for complex tasks.
-- Audited tool policy with path allowlists, command allowlists, and default denial for writes, commands, and internal directories.
+- Audited tool policy with path allowlists, command allowlists, command sandbox limits, network host allowlists, and default denial for writes, commands, and internal directories.
 - Minimal MCP stdio client exposed as a gated `mcp_call` executor tool.
 - Skill package installer with `yizutt skill install <path-or-url>`.
 - Team memory bundle export/import for sharing memory and skills across agent workspaces.
@@ -37,10 +38,10 @@ This repository is intentionally small. Its goal is to prove the core loop:
 - `python/yizutt_agi/memory.py` stores cross-session working memory in SQLite FTS5 plus graph and vector memory tables.
 - `python/yizutt_agi/skills.py` stores reusable skills as `SKILL.md` files.
 - `python/yizutt_agi/i18n.py` resolves global language short codes, environment defaults, and CLI entrypoint suffixes.
-- `python/yizutt_agi/panel.py` serves the local Web panel, proxies panel API calls to the runtime CLI, and bridges streaming task output over SSE.
+- `python/yizutt_agi/panel.py` serves the local Web panel, proxies panel API calls to the runtime CLI, stores panel task history, and bridges streaming task output over SSE.
 - `python/yizutt_agi/real_loop.py` runs one direct model-memory-skill loop without starting the Rust runtime.
 - `python/yizutt_agi/client.py` calls the Rust runtime CLI from Python.
-- `web/panel/index.html` is the browser UI for the local panel, including live task trace output.
+- `web/panel/index.html` is the browser UI for the local panel, including live task trace output and saved history replay.
 - `examples/local_mock_model.py` serves a deterministic local model endpoint for no-key end-to-end demos.
 - `examples/echo_mcp_server.py` is a tiny MCP stdio server for local tool-call validation.
 - `examples/skills/echo-skill` is a minimal installable skill package.
@@ -77,11 +78,17 @@ Check pool status:
 
 `status` actively probes each worker process and verifies that the Python sidecar can import `yizutt_agi.executor`. The output includes `checked_at` and `last_error` for each worker. Task-level model or provider errors are returned as `status: "error"` replies and do not mark the worker unhealthy.
 
+Check persisted Runtime task status:
+
+`target/debug/yizutt-runtime tasks --home .yizutt/runtime --limit 20`
+
+Runtime startup can explicitly recover unfinished log records. Use `--expire-incomplete-tasks` to mark queued/running records as `expired_on_startup`, or `--resume-incomplete-tasks` to re-dispatch them with the stored task and context. The two flags are mutually exclusive and both write new audit records to `tasks.jsonl`.
+
 Start the local Web panel:
 
 `PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200`
 
-Open `http://127.0.0.1:50280` in a browser. The panel lets you edit the Runtime address, inspect workers, submit a task, and view recent memory and skills. Task submission uses `/api/submit-stream` to bridge `submit --stream` into browser SSE output, so tool calls, tool results, and final trace lines appear while the worker is running. The default UI language is Simplified Chinese, with Traditional Chinese, English, Japanese, Korean, Arabic, and Russian available from the language selector. Model API keys stay in the server environment and are not exposed to the browser.
+Open `http://127.0.0.1:50280` in a browser. The panel lets you edit the Runtime address, inspect workers, submit a task, replay saved task history, inspect the Runtime task queue, and view recent memory and skills. Task submission uses `/api/submit-stream` to bridge `submit --stream` into browser SSE output, so tool calls, tool results, and final trace lines appear while the worker is running. Each panel submission is stored in `.yizutt/panel/history.sqlite3` by default; override it with `--history-path` or `YIZUTT_PANEL_HISTORY_PATH`. Runtime queue status is read from `.yizutt/runtime/tasks.jsonl` by default; override it with `--runtime-home` or `YIZUTT_RUNTIME_HOME`. The default UI language is Simplified Chinese, with Traditional Chinese, English, Japanese, Korean, Arabic, and Russian available from the language selector. Model API keys stay in the server environment and are not exposed to the browser.
 
 Global language defaults use short codes. `cnzh` is the default Simplified Chinese code. You can start the panel with `--lang cnzh`, set `YIZUTT_LANG=cnzh`, or use an installed entrypoint suffix such as `yizutt-panel_cnzh`. Supported entrypoint suffixes are `_cnzh`, `_twzh`, `_en`, `_ja`, `_ko`, `_ar`, and `_ru`.
 
@@ -159,13 +166,17 @@ Complex tasks can ask the Python sidecar to create a structured subtask plan bef
 
 `target/debug/yizutt-runtime submit --task "Plan a three-step implementation for a local dashboard, health check, and docs update" --context-json '{"provider":"openai","orchestrate":true,"max_subtasks":3}'`
 
-The returned trace includes a `plan_created` event. Each plan item includes `id`, `title`, `objective`, and `status`. By default the sidecar returns a reusable `plan_only` JSON result. To execute subtasks sequentially through the existing tool loop, pass `"execute_plan": true` in `context_json`.
+The returned trace includes a `plan_created` event. Each plan item includes `id`, `title`, `objective`, and `status`; Runtime dispatch also understands optional `depends_on`. By default the sidecar returns a reusable `plan_only` JSON result. To execute subtasks sequentially through the existing tool loop, pass `"execute_plan": true` in `context_json`. To let the Rust Runtime persist the plan and dispatch subtasks to workers, pass `"execute_plan_parallel": true`; the final reply includes `parallel_subtasks`, and `yizutt-runtime tasks --home .yizutt/runtime` shows parent and subtask status after restart.
+
+Parallel dispatch is policy bounded by `max_parallel_subtasks`, `max_parallel_concurrency`, and `max_subtask_retries` in `context_json`. A plan item with `depends_on:["step-1"]` waits for `step-1` to complete successfully; blocked dependents are reported as `skipped_dependency_failed`.
 
 ## Tool Security
 
 The Python sidecar can run `list_dir`, `read_file`, `write_file`, and `run_command` when a model returns structured `tool_calls`. Tool execution is policy gated before any file or process action.
 
 By default, reads are confined to the project root, hidden/internal paths such as `.git`, `.yizutt`, `__pycache__`, and `target` are denied, file writes are denied, and command execution is denied. `context.allowed_paths` narrows readable or writable paths to specific project-relative directories. `write_file` additionally requires `context.allow_file_write=true`. `run_command` requires both `context.allow_commands=true` and an executable whitelist such as `context.allowed_commands=["python"]`.
+
+Command tools run with a sanitized environment, clamp `timeout_secs` and output size to policy limits, and cancel the process group on timeout. Network-capable command tools such as `curl`, `wget`, `ssh`, and `scp` require both `context.allow_network=true` and `context.allowed_network_hosts=["example.com"]` or `["*"]`.
 
 Tool trace events avoid raw sensitive arguments. `tool_call` records `arguments_summary`, and `tool_result` records `tool`, `ok`, `allowed`, `reason`, `arguments_summary`, and the result text.
 
@@ -181,6 +192,10 @@ Manual policy checks:
 
 `PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; print(json.dumps(execute_tool("run_command", {"command":["python","-V"]}, {"allow_commands":True,"allowed_commands":["python"]}), ensure_ascii=False))'`
 
+`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; ctx={"allow_commands":True,"allowed_commands":["curl"]}; print(json.dumps(execute_tool("run_command", {"command":["curl","https://example.com"]}, ctx), ensure_ascii=False))'`
+
+`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; ctx={"allow_commands":True,"allowed_commands":["python"],"max_command_timeout_secs":1}; print(json.dumps(execute_tool("run_command", {"command":["python","-c","import time; time.sleep(2)"],"timeout_secs":5}, ctx), ensure_ascii=False))'`
+
 ## Memory Search
 
 Working memory stores the original message text plus a tokenized FTS5 index for Chinese and English search. Chinese queries such as `技能`, `运行`, and `运行时` are routed through the tokenized field; English queries continue to work through both original content and token indexes.
@@ -191,7 +206,7 @@ Generated memory databases and skill outputs are stored under `.yizutt/`, which 
 
 The same SQLite memory database now includes `graph_entities` and `graph_relations` tables for lightweight long-term facts. `WorkingMemory.append_message()` extracts simple cross-session facts such as user preferences and project technology choices, while `add_relation()` can store explicit facts from higher-level code.
 
-Use `search_graph(query)` for structured results or `graph_context(query)` for prompt-ready lines such as `user -[prefers]-> Rust for runtime design`. The executor and direct real-loop demo append graph context to the normal FTS5 memory context when relevant facts are found.
+Use `search_graph(query)` for ranked structured results, `search_graph_reasoning(query)` for direct facts plus one-hop related facts, or `graph_context(query)` for prompt-ready scored lines such as `user -[prefers]-> Rust for runtime design`. The executor and direct real-loop demo append graph context to the normal FTS5 memory context when relevant facts are found.
 
 Quick check:
 
@@ -216,6 +231,8 @@ Quick check:
 ## Skill Quality Control
 
 `SkillStore.save_skill()` now uses a minimal draft -> verified -> active flow. It renders a draft skill, replays the generated `SKILL.md` structure by parsing name, description, and numbered steps, and only marks the skill `active` when the replay check passes. Weak skills remain `draft` with `replay_check: failed` and are not returned by `skill_context()`.
+
+`search_skills(query)` ranks active skills with token coverage across name, description, and step text, including Chinese n-gram tokens. `skill_context()` and the workflow composer use the same ranking so skill chains are based on the reusable steps, not only titles.
 
 To prevent skill file growth, same-name skills and highly similar skills are merged. Existing steps are kept first, new unique steps are appended, and the final `SKILL.md` records `status`, `state_history`, `replay_check`, `updated_at`, and `similarity_score` in frontmatter.
 
@@ -266,10 +283,16 @@ The current prototype has been run locally with:
 - Python sidecar execution through an OpenAI-compatible local proxy
 - Local Web panel status, streaming task submission, memory, skill APIs, and language switching
 - Local Web panel `/api/submit-stream` SSE bridge for live gRPC trace output
+- Local Web panel persistent task history list and saved trace replay
+- Local Web panel Runtime queue view and CI smoke check for HTML, config API, history API, and Runtime task API
 - gRPC `submit --stream` trace events for accepted, tool calls, tool results, training records, completion, and final output
+- Durable Runtime `tasks.jsonl` queue status plus parallel subtask dispatch from `plan_created`
+- Dependency-aware subtask waves, retry attempts, max concurrency, and queue-depth rejection
+- Startup recovery for incomplete Runtime task records with explicit resume or expire modes
 - Leader/Orchestrator `plan_created` trace generation for a complex task
 - Tool loop execution with `read_file` returning the first README heading
 - Tool policy denial for hidden paths, writes, and commands, plus allowlisted command execution
+- Command sandbox timeout cancellation, sanitized env, default network denial, and host allowlist validation
 - MCP stdio tool call denial and allowlisted echo-server execution
 - Skill replay checks, draft rejection, and same-name skill merge behavior
 - Local skill package install and list commands
@@ -278,7 +301,9 @@ The current prototype has been run locally with:
 - Active health checks for healthy workers, sidecar import failures, and task-level error replies
 - Chinese FTS5 memory search for `技能`, `运行`, `运行时`, and `真实模型`
 - SQLite graph memory extraction and cross-session graph lookup
+- Ranked graph reasoning context with one-hop related facts
 - Sparse vector memory write, search, and prompt context formatting
+- Ranked skill search and workflow composition based on skill step content
 - Training example scoring and accepted-only buffer lookup
 
 ## MVP Boundaries
@@ -287,11 +312,7 @@ This is not a production agent runtime yet. Worker sandboxes are local child pro
 
 ## Roadmap
 
-- Add persistent task history and replay in the Web panel.
-- Add richer tool execution cancellation and sandboxing.
 - Add stronger worker isolation with containers or OS sandboxing.
-- Add richer graph reasoning and skill ranking.
-- Expand CI with Web panel smoke checks.
 
 ## License
 

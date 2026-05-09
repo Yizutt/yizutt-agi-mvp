@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import signal
 import shlex
 import subprocess
 import sys
@@ -45,6 +46,8 @@ Security policy:
 - Hidden and internal directories are denied unless context.allow_internal_paths is true.
 - context.allowed_paths can narrow file tools to specific project-relative directories.
 - Commands are denied by default. Use context.allow_commands=true plus context.allowed_commands=["python"] for limited command access.
+- Command tools run with a small sanitized environment unless context.allowed_env explicitly names variables to pass through.
+- Network-capable command tools require context.allow_network=true and context.allowed_network_hosts=["host"].
 - MCP servers are denied by default. Use context.allow_mcp=true plus context.mcp_servers for explicit server access.
 
 When a tool is needed, return only JSON:
@@ -80,6 +83,21 @@ DANGEROUS_COMMANDS = {
     "sudo",
     "wget",
 }
+NETWORK_COMMANDS = {
+    "curl",
+    "ftp",
+    "nc",
+    "netcat",
+    "nmap",
+    "ping",
+    "scp",
+    "sftp",
+    "ssh",
+    "telnet",
+    "wget",
+}
+URL_RE = re.compile(r"(?P<scheme>https?|ftp|ssh)://(?P<host>\[[^\]]+\]|[^/:?#\s]+)", re.IGNORECASE)
+HOST_FLAG_NAMES = {"--host", "-h", "--hostname", "--connect-to", "--proxy", "-x"}
 ORCHESTRATION_HINTS = {
     "分解",
     "规划",
@@ -102,7 +120,9 @@ ORCHESTRATION_HINTS = {
 
 
 class ToolPolicyError(Exception):
-    pass
+    def __init__(self, message: str, reason: str = "policy_denied") -> None:
+        super().__init__(message)
+        self.reason = reason
 
 
 def emit(event_type: str, payload: str = "", **fields: Any) -> None:
@@ -566,7 +586,7 @@ def execute_tool(name: str, arguments: dict[str, Any], context: dict[str, Any]) 
         return _tool_result(
             False,
             False,
-            "path_denied",
+            exc.reason,
             f"tool policy denied: {exc}",
             argument_summary,
         )
@@ -640,30 +660,35 @@ def tool_run_command(arguments: dict[str, Any], context: dict[str, Any]) -> dict
     allowed, reason = _command_allowed(argv, context)
     if not allowed:
         return _tool_result(False, False, reason, f"run_command denied by policy: {reason}")
-    timeout_secs = int(arguments.get("timeout_secs") or 10)
-    max_output_chars = int(arguments.get("max_output_chars") or 12000)
-    try:
-        completed = subprocess.run(
-            argv,
-            cwd=_project_root(context),
-            text=True,
-            capture_output=True,
-            timeout=timeout_secs,
-            check=False,
-        )
-    except subprocess.TimeoutExpired as exc:
-        output = "\n".join(["timeout", exc.stdout or "", exc.stderr or ""])
-        return _tool_result(False, True, "command_timeout", _truncate(output, max_output_chars))
+    network_allowed, network_reason = _network_allowed(argv, context)
+    if not network_allowed:
+        return _tool_result(False, False, network_reason, f"run_command denied by network policy: {network_reason}")
+    timeout_secs = _clamped_int(
+        arguments.get("timeout_secs"),
+        default=10,
+        min_value=1,
+        max_value=_int_setting(context, "max_command_timeout_secs", "YIZUTT_EXECUTOR_MAX_COMMAND_TIMEOUT_SECS", 30),
+    )
+    max_output_chars = _clamped_int(
+        arguments.get("max_output_chars"),
+        default=12000,
+        min_value=256,
+        max_value=_int_setting(context, "max_command_output_chars", "YIZUTT_EXECUTOR_MAX_COMMAND_OUTPUT_CHARS", 60000),
+    )
+    completed = run_sandboxed_command(argv, _project_root(context), timeout_secs, command_env(context))
+    if completed["timed_out"]:
+        output = "\n".join(["timeout", completed["stdout"], completed["stderr"]])
+        return _tool_result(False, True, "command_timeout_cancelled", _truncate(output, max_output_chars))
     text = "\n".join(
         [
-            f"exit_code: {completed.returncode}",
+            f"exit_code: {completed['returncode']}",
             "stdout:",
-            completed.stdout,
+            completed["stdout"],
             "stderr:",
-            completed.stderr,
+            completed["stderr"],
         ]
     )
-    return _tool_result(completed.returncode == 0, True, "command_allowed", _truncate(text, max_output_chars))
+    return _tool_result(completed["returncode"] == 0, True, "command_allowed", _truncate(text, max_output_chars))
 
 
 def tool_mcp_call(arguments: dict[str, Any], context: dict[str, Any]) -> dict[str, Any]:
@@ -697,6 +722,71 @@ def tool_mcp_call(arguments: dict[str, Any], context: dict[str, Any]) -> dict[st
         client.initialize()
         result = client.call_tool(tool_name, tool_arguments)
     return _tool_result(True, True, "mcp_allowed", json.dumps(result, ensure_ascii=False))
+
+
+def run_sandboxed_command(argv: list[str], cwd: Path, timeout_secs: int, env: dict[str, str]) -> dict[str, Any]:
+    start_new_session = os.name == "posix"
+    process = subprocess.Popen(
+        argv,
+        cwd=cwd,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        stdin=subprocess.DEVNULL,
+        env=env,
+        start_new_session=start_new_session,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_secs)
+        return {
+            "returncode": process.returncode,
+            "stdout": stdout or "",
+            "stderr": stderr or "",
+            "timed_out": False,
+        }
+    except subprocess.TimeoutExpired:
+        _terminate_process_tree(process)
+        stdout, stderr = process.communicate()
+        return {
+            "returncode": process.returncode,
+            "stdout": stdout or "",
+            "stderr": stderr or "",
+            "timed_out": True,
+        }
+
+
+def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    if os.name == "posix":
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=2)
+            return
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            pass
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=2)
+            return
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            pass
+    process.kill()
+
+
+def command_env(context: dict[str, Any]) -> dict[str, str]:
+    env: dict[str, str] = {}
+    for name in ("PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "PYTHONPATH"):
+        value = os.getenv(name)
+        if value is not None:
+            env[name] = value
+    for name in _list_setting(context, "allowed_env", "YIZUTT_EXECUTOR_ALLOWED_ENV"):
+        if name in os.environ:
+            env[name] = os.environ[name]
+    env["YIZUTT_TOOL_SANDBOX"] = "1"
+    if not _bool_setting(context, "allow_network", "YIZUTT_EXECUTOR_ALLOW_NETWORK"):
+        env["YIZUTT_NETWORK_DISABLED"] = "1"
+    return env
 
 
 def _tool_result(
@@ -782,23 +872,23 @@ def _project_root(context: dict[str, Any]) -> Path:
 
 def _resolve_tool_path(value: Any, context: dict[str, Any]) -> Path:
     if not value:
-        raise ToolPolicyError("path is required")
+        raise ToolPolicyError("path is required", "path_required")
     root = _project_root(context)
     candidate = Path(str(value)).expanduser()
     if not candidate.is_absolute():
         candidate = root / candidate
     resolved = candidate.resolve()
     if resolved != root and root not in resolved.parents:
-        raise ToolPolicyError(f"path escapes project root: {value}")
+        raise ToolPolicyError(f"path escapes project root: {value}", "path_escapes_project_root")
     allowed_roots = _allowed_path_roots(context, root)
     if not any(resolved == allowed or allowed in resolved.parents for allowed in allowed_roots):
         allowed_text = ", ".join(str(path.relative_to(root)) for path in allowed_roots)
-        raise ToolPolicyError(f"path outside allowed_paths: {value}; allowed: {allowed_text}")
+        raise ToolPolicyError(f"path outside allowed_paths: {value}; allowed: {allowed_text}", "path_outside_allowed_paths")
     if not _bool_setting(context, "allow_internal_paths", "YIZUTT_EXECUTOR_ALLOW_INTERNAL_PATHS"):
         denied = {str(part) for part in context.get("deny_path_parts", DEFAULT_DENY_PATH_PARTS)}
         for part in resolved.relative_to(root).parts:
             if part.startswith(".") or part in denied:
-                raise ToolPolicyError(f"path uses denied internal segment: {part}")
+                raise ToolPolicyError(f"path uses denied internal segment: {part}", "path_internal_segment_denied")
     return resolved
 
 
@@ -813,7 +903,7 @@ def _allowed_path_roots(context: dict[str, Any], root: Path) -> list[Path]:
             candidate = root / candidate
         resolved = candidate.resolve()
         if resolved != root and root not in resolved.parents:
-            raise ToolPolicyError(f"allowed_path escapes project root: {value}")
+            raise ToolPolicyError(f"allowed_path escapes project root: {value}", "allowed_path_escapes_project_root")
         roots.append(resolved)
     return roots
 
@@ -830,6 +920,63 @@ def _command_allowed(argv: list[str], context: dict[str, Any]) -> tuple[bool, st
     if executable in DANGEROUS_COMMANDS:
         return False, "dangerous_command_not_whitelisted"
     return False, "command_not_whitelisted"
+
+
+def _network_allowed(argv: list[str], context: dict[str, Any]) -> tuple[bool, str]:
+    executable = Path(argv[0]).name.lower()
+    is_network_command = executable in NETWORK_COMMANDS
+    hosts = command_network_hosts(argv, include_host_flags=is_network_command)
+    network_capable = is_network_command or bool(hosts)
+    if not network_capable:
+        return True, "network_not_requested"
+    if not _bool_setting(context, "allow_network", "YIZUTT_EXECUTOR_ALLOW_NETWORK"):
+        return False, "network_disabled"
+    allowed_hosts = _list_setting(context, "allowed_network_hosts", "YIZUTT_EXECUTOR_ALLOWED_NETWORK_HOSTS")
+    if "*" in allowed_hosts:
+        return True, "network_allowed"
+    if not allowed_hosts:
+        return False, "network_whitelist_required"
+    if not hosts:
+        return False, "network_host_not_declared"
+    denied = [host for host in hosts if not _host_allowed(host, allowed_hosts)]
+    if denied:
+        return False, "network_host_not_allowed"
+    return True, "network_allowed"
+
+
+def command_network_hosts(argv: list[str], include_host_flags: bool = True) -> list[str]:
+    hosts: list[str] = []
+    for idx, part in enumerate(argv):
+        for match in URL_RE.finditer(part):
+            hosts.append(match.group("host").strip("[]").lower())
+        if include_host_flags and part in HOST_FLAG_NAMES and idx + 1 < len(argv):
+            hosts.append(_normalize_host_arg(argv[idx + 1]))
+    return [host for host in dict.fromkeys(hosts) if host]
+
+
+def _normalize_host_arg(value: str) -> str:
+    text = str(value).strip()
+    if "://" in text:
+        match = URL_RE.search(text)
+        return match.group("host").strip("[]").lower() if match else ""
+    if "@" in text:
+        text = text.rsplit("@", 1)[1]
+    if text.startswith("[") and "]" in text:
+        return text[1 : text.index("]")].lower()
+    return text.split(":", 1)[0].strip().lower()
+
+
+def _host_allowed(host: str, allowed_hosts: list[str]) -> bool:
+    normalized = host.strip(".").lower()
+    for allowed in allowed_hosts:
+        item = allowed.strip().lower()
+        if not item:
+            continue
+        if item == normalized:
+            return True
+        if normalized.endswith(f".{item}"):
+            return True
+    return False
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -886,6 +1033,14 @@ def _int_setting(context: dict[str, Any], key: str, env_name: str, default: int)
         return max(0, int(value))
     except (TypeError, ValueError):
         return default
+
+
+def _clamped_int(value: Any, default: int, min_value: int, max_value: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return min(max(parsed, min_value), max_value)
 
 
 def main(argv: list[str] | None = None) -> int:

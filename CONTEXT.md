@@ -11,20 +11,21 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - **项目更名**：对外项目名已从旧名称迁移为 Yizutt AGI。
 - **Rust Runtime & WorkerPool**：基于 gRPC 的异步任务调度，支持动态扩容、主动健康检查和健康标记。
 - **CLI 入口重写**：使用 `clap` 实现了 `run`、`submit`、`status` 子命令。
+- **持久任务队列**：Runtime 将父任务和子任务状态追加写入 `.yizutt/runtime/tasks.jsonl`，CLI `tasks` 可在 Runtime 重启后查看最近任务状态；启动时可显式恢复未完成任务或标记为过期。
 - **Sidecar 执行通路**：Rust Worker 启动 Python 子进程执行任务，通信通过标准输出 JSON 轨迹。
 - **模型网关**：`model_gateway.py` 统一了 OpenAI / Anthropic / 本地模型的调用接口。
 - **中文记忆检索**：双 FTS5 索引（原文字段 + 分词字段），解决了 SQLite 默认分词的中文 0 命中问题。
-- **技能文件存储与质量控制**：任务执行完成后可将成功路径保存为 `SKILL.md`，并通过 draft -> verified -> active 流程做结构 replay 检查；同名或高相似技能会合并，草稿技能不会进入召回上下文。
+- **技能文件存储与质量控制**：任务执行完成后可将成功路径保存为 `SKILL.md`，并通过 draft -> verified -> active 流程做结构 replay 检查；同名或高相似技能会合并，草稿技能不会进入召回上下文；技能召回会基于标题、描述和步骤正文做加权排序。
 - **工具调用循环**：`executor.py` 支持模型返回 `tool_calls`，执行受控工具后继续下一轮模型调用。
-- **工具安全审计**：工具执行默认拒绝写文件、命令执行和内部路径访问，支持 `allowed_paths` 与 `allowed_commands` 显式授权，并在 trace 中记录脱敏参数摘要、允许状态和拒绝原因。
+- **工具安全审计与基础沙箱**：工具执行默认拒绝写文件、命令执行、内部路径访问和命令网络访问，支持 `allowed_paths`、`allowed_commands`、`allowed_network_hosts` 显式授权；命令工具使用精简环境、超时上限、输出上限和进程组取消，并在 trace 中记录脱敏参数摘要、允许状态和拒绝原因。
 - **证明性闭环**：`real_loop.py` 跑通了“提交任务 -> 模型调用 -> 写入记忆 -> 保存技能”的全链路。
-- **本地 Wed/Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态、提交任务并实时显示 trace、查看最近记忆和技能摘要，并支持全局语言短码切换，默认 `cnzh` 中文-简体，可切换繁体中文、英语、日语、韩语、阿拉伯语、俄语。
-- **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回。
+- **本地 Web 面板**：`python -m yizutt_agi.panel` 可启动浏览器面板，查看 Runtime 状态和 Runtime 队列、提交任务并实时显示 trace、回放持久任务历史、查看最近记忆和技能摘要，并支持全局语言短码切换，默认 `cnzh` 中文-简体，可切换繁体中文、英语、日语、韩语、阿拉伯语、俄语。
+- **最小 Leader/Orchestrator**：复杂任务可在 Python sidecar 中先生成结构化子任务计划，并通过 `plan_created` trace 返回；`execute_plan_parallel=true` 时 Runtime 会持久化计划，并按 `depends_on`、最大并发、队列深度和重试策略派发子任务。
 - **主动健康检查**：Runtime `status` 会主动探测 Worker RPC 和 Python sidecar 导入状态，任务级错误返回 `status: "error"`，不再误杀 Worker。
 - **开源许可证**：仓库根目录已添加 MIT `LICENSE`，README 和中文说明已同步许可证信息。
-- **基础 CI**：GitHub Actions 会在 push 到 `main` 和 pull request 时运行 Rust 与 Python 基础检查。
+- **基础 CI**：GitHub Actions 会在 push 到 `main` 和 pull request 时运行 Rust 与 Python 基础检查，并启动本地 Web 面板做 HTML、配置 API 和历史 API smoke。
 - **端到端本地 Mock Demo**：`examples/local_mock_model.py` 可提供无 API key 的确定性模型端点，README 已给出 Runtime、工具调用、记忆查询和技能生成的完整流程。
-- **SQLite Graph Memory**：`memory.py` 在 FTS5 之外增加实体/关系表，自动抽取简单用户偏好和项目技术事实，支持跨会话图谱查询并向 executor/real_loop 注入图谱上下文。
+- **SQLite Graph Memory**：`memory.py` 在 FTS5 之外增加实体/关系表，自动抽取简单用户偏好、项目技术事实和 requires/improves 关系，支持带分数的跨会话图谱查询、一跳关联推理上下文，并向 executor/real_loop 注入图谱上下文。
 - **稀疏向量记忆**：`memory.py` 为每条消息持久化 `memory_vectors` 稀疏 token 向量，支持 cosine 相似检索，并向 executor/real_loop 注入 vector context。
 - **训练数据缓冲区**：成功执行轨迹会进入 SQLite `training_examples` 表，按简单质量规则评分并标记 accepted，为未来微调准备数据但不自动训练。
 - **gRPC 流式 Trace API**：`proto/yizutt.proto` 和 Runtime/Worker 已支持 `SubmitStream`/`ExecuteStream`，CLI 可用 `submit --stream` 实时输出事件，普通 `submit` 保持兼容。
@@ -37,39 +38,39 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 
 | 模块 | 路径 | 职责 |
 |------|------|------|
-| Rust Runtime 主程序 | `crates/yizutt-runtime/src/main.rs` | WorkerPool 管理、主动健康探测、gRPC 服务启动、Sidecar 子进程拉起 |
+| Rust Runtime 主程序 | `crates/yizutt-runtime/src/main.rs` | WorkerPool 管理、主动健康探测、持久任务日志、启动恢复、并行子任务派发、gRPC 服务启动、Sidecar 子进程拉起 |
 | Protobuf 定义 | `proto/yizutt.proto` | 定义 RuntimeService、WorkerService 和健康检查字段 |
-| Python 执行器 | `python/yizutt_agi/executor.py` | 被 Worker 调用的入口，负责模型调用、工具循环、最小任务分解、写记忆、存技能 |
+| Python 执行器 | `python/yizutt_agi/executor.py` | 被 Worker 调用的入口，负责模型调用、工具循环、基础沙箱策略、最小任务分解、写记忆、存技能 |
 | 模型网关 | `python/yizutt_agi/model_gateway.py` | 多厂商 API 统一调用，启发式路由 |
-| 工作记忆 | `python/yizutt_agi/memory.py` | SQLite + FTS5 双索引存储与检索 |
-| 技能存储 | `python/yizutt_agi/skills.py` | 技能文件的保存和加载 |
+| 工作记忆 | `python/yizutt_agi/memory.py` | SQLite + FTS5 双索引、图谱推理和向量记忆存储与检索 |
+| 技能存储 | `python/yizutt_agi/skills.py` | 技能文件的保存、加载、质量验证和加权召回 |
 | 语言解析 | `python/yizutt_agi/i18n.py` | 统一解析 `cnzh` 等语言短码、环境变量和 CLI 入口后缀 |
-| 本地面板服务 | `python/yizutt_agi/panel.py` | 提供 HTTP 面板 API，代理 Runtime CLI，读取记忆和技能摘要，并用 SSE 桥接流式任务输出 |
-| 本地面板页面 | `web/panel/index.html` | 浏览器 UI，用于查看状态、提交任务、实时 trace、查看记忆和技能 |
+| 本地面板服务 | `python/yizutt_agi/panel.py` | 提供 HTTP 面板 API，代理 Runtime CLI，保存任务历史，读取 Runtime 队列、记忆和技能摘要，并用 SSE 桥接流式任务输出 |
+| 本地面板页面 | `web/panel/index.html` | 浏览器 UI，用于查看状态、Runtime 队列、提交任务、实时 trace、回放任务历史、查看记忆和技能 |
 | 离线闭环测试 | `python/yizutt_agi/real_loop.py` | 不依赖 Runtime 的端到端验证脚本 |
 
 ## 四、架构决策
 
 - **Rust 负责性能敏感层**（调度、隔离、通信），**Python 负责灵活层**（模型调用、工具、记忆、技能）。
-- **Worker 隔离机制**：每个 Worker 是独立子进程，有独立工作目录 `.yizutt/runtime/workers/<id>/`。
+- **Worker 隔离机制**：每个 Worker 是独立子进程，有独立工作目录 `.yizutt/runtime/workers/<id>/`；Runtime 任务状态以 append-only JSONL 写入 `.yizutt/runtime/tasks.jsonl`，启动恢复同样通过追加日志记录审计。
 - **内存数据非共享**：Worker 之间不直接共享内存状态，必要协作通过 Runtime 分配子任务。
 - **中文分词**：`memory.py` 写入时生成 tokens，查询时命中 `messages_tokens_fts`。
-- **受控工具执行**：`executor.py` 默认允许项目根目录内的读目录和读文件，但拒绝隐藏/内部目录；写文件必须显式开启 `allow_file_write`，命令必须同时开启 `allow_commands` 并命中 `allowed_commands` 白名单。
+- **受控工具执行**：`executor.py` 默认允许项目根目录内的读目录和读文件，但拒绝隐藏/内部目录；写文件必须显式开启 `allow_file_write`，命令必须同时开启 `allow_commands` 并命中 `allowed_commands` 白名单；网络型命令还必须开启 `allow_network` 并命中 `allowed_network_hosts`。
 - **gRPC 通信**：Runtime 支持一元 `Submit` 和 server-streaming `SubmitStream`；Web 面板通过 `/api/submit-stream` 把 CLI 流式输出桥接为浏览器 SSE。
 
 ## 五、当前主要短板（需后续开发）
 
-1. **编排能力仍薄**：已有最小 `plan_created` 子任务计划和流式 trace，但还没有持久队列和真正的并行子任务调度。
-2. **安全沙箱薄弱**：已有工具级策略和审计，但还没有 cgroups 限制、容器隔离和网络白名单。
-3. **下一阶段重点**：当前横向能力已覆盖 MVP 主链路，后续优先做真实使用场景纵向打磨，例如 Web 面板持久任务历史、生产沙箱或远程 Worker。
+1. **编排能力仍需深化**：已有最小 `plan_created` 子任务计划、持久任务日志、依赖感知子任务派发、重试、最大并发、队列深度限制和启动恢复/过期策略，但还没有优先级队列和完整 backpressure。
+2. **生产隔离仍需加强**：已有工具级策略、审计、命令超时取消、精简环境和网络 host 白名单，但还没有 cgroups 限制、容器隔离和系统级网络隔离。
+3. **下一阶段重点**：当前明确任务队列已完成；后续优先做容器或 OS sandbox、远程 Worker、优先级队列。
 
 ## 六、当前任务队列
 
 执行规则：按优先级从 P0 到 P4 顺序执行。完成一个任务后，同步第二、三、五、六节，并把下一个未完成任务标记为“当前执行”。
 
-### P0-0 已完成：增加 Wed 面板
+### P0-0 已完成：增加 Web 面板
 
-**目标**：为 Yizutt AGI 增加一个最小可运行的本地 Wed 面板，用于查看 Runtime 状态、提交任务、查看任务 trace、查看记忆和技能摘要，作为后续人机协作入口。
+**目标**：为 Yizutt AGI 增加一个最小可运行的本地 Web 面板，用于查看 Runtime 状态、提交任务、查看任务 trace、查看记忆和技能摘要，作为后续人机协作入口。
 
 **建议涉及文件**：
 - `web/` 或 `panel/`：新增前端面板代码，优先选择轻量方案，避免引入重型框架。
@@ -345,9 +346,164 @@ Yizutt AGI 是一个自进化、多 Agent 协作的 AI 队友框架，采用 Rus
 - 终端 3：`PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200`
 - 浏览器打开 `http://127.0.0.1:50280`，提交 `Use the read_file tool to read README.md, then summarize the project in one sentence.`，应看到 `tool_call`、`tool_result`、`completed` 和最终 `exit_code: 0` 逐行出现。
 
+### N1-2 已完成：Web 面板持久任务历史与 replay
+
+**目标**：把每次从 Web 面板提交的任务、session、状态、trace 摘要和完成时间保存到本地，供浏览器回看和复盘。
+
+**涉及文件**：
+- `python/yizutt_agi/panel.py`
+- `web/panel/index.html`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**完成情况**：`panel.py` 新增 `--history-path` / `YIZUTT_PANEL_HISTORY_PATH`，默认把面板任务历史保存到 `.yizutt/panel/history.sqlite3`。新增 `/api/history` 和 `/api/history/run?id=...` 只读 API，记录每次提交的 task、session、runtime、context、status、exit_code、stderr、trace_summary、trace_json、started_at 和 completed_at。`/api/submit-stream` 会在任务开始时创建历史记录，结束或失败时写入最终状态和可 replay 的 trace 事件；普通 `/api/submit` 也会保存一次性返回记录。`web/panel/index.html` 新增任务历史区，可刷新最近运行并点击“回放”把历史任务参数和已保存 trace 载回输出面板。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
+- 前端静态检查：`python -c 'from pathlib import Path; text=Path("web/panel/index.html").read_text(); assert "/api/history" in text and "loadHistoryRun" in text and "historyList" in text; print("panel-history-js-ok")'`
+- 历史库 API 检查：`PYTHONPATH=python python -c 'import tempfile, json; from pathlib import Path; from yizutt_agi.panel import PanelConfig, history_start_run, history_finish_run, api_history, api_history_run; td=tempfile.TemporaryDirectory(); root=Path(td.name); cfg=PanelConfig("127.0.0.1", 0, "http://127.0.0.1:50200", "yizutt-runtime", root, root, root/"runtime", root/"memory.sqlite3", root/"skills", root/"history.sqlite3", 10, "cnzh"); rid=history_start_run(cfg, cfg.runtime_addr, "s1", "hello task", "{}"); history_finish_run(cfg, rid, "completed", True, 0, "", [{"type":"line","text":"trace ok"}]); listing=api_history(cfg, "limit=5"); detail=api_history_run(cfg, f"id={rid}"); assert listing["items"][0]["id"] == rid and detail["item"]["trace"][0]["text"] == "trace ok"; print(json.dumps({"run_id": rid, "items": len(listing["items"]), "trace_count": detail["item"]["trace_count"]})); td.cleanup()'`
+- 面板验证：启动 Runtime 和面板后提交一个任务，任务结束后应在“任务历史”区看到记录；点击“回放”应恢复任务、session、context 和 trace 输出。
+
+### N1-3 已完成：生产沙箱基础隔离与网络白名单
+
+**目标**：在现有工具级安全策略之外，为本地 Worker/sidecar 增加更接近生产环境的资源隔离和网络访问约束设计，先实现可验证的最小保护层。
+
+**涉及文件**：
+- `python/yizutt_agi/executor.py`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**完成情况**：`executor.py` 的 `run_command` 工具新增基础沙箱策略：命令默认仍拒绝，开启后必须命中 `allowed_commands`；命令进程使用精简环境变量，只透传 `PATH`、`HOME`、`TMPDIR`、`LANG`、`LC_ALL`、`PYTHONPATH` 和显式 `allowed_env`；`timeout_secs` 和输出大小会被策略上限钳制；超时时会取消进程组并返回 `reason: "command_timeout_cancelled"`。`curl`、`wget`、`ssh`、`scp` 等网络型命令默认拒绝，必须同时设置 `allow_network=true` 和 `allowed_network_hosts`，host 支持精确和子域匹配。所有拒绝都通过 `tool_result.reason` 返回结构化原因，不扩大默认权限。
+
+**手动验证命令**：
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
+- 网络默认拒绝：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; ctx={"allow_commands":True,"allowed_commands":["curl"]}; print(json.dumps(execute_tool("run_command", {"command":["curl","https://example.com"]}, ctx), ensure_ascii=False))'`
+- 网络 host 白名单：`PYTHONPATH=python python -c 'from yizutt_agi.executor import _network_allowed; print(_network_allowed(["curl","https://api.example.com/v1"], {"allow_network":True,"allowed_network_hosts":["example.com"]}))'`
+- 超时取消：`PYTHONPATH=python python -c 'from yizutt_agi.executor import execute_tool; import json; ctx={"allow_commands":True,"allowed_commands":["python"],"max_command_timeout_secs":1}; print(json.dumps(execute_tool("run_command", {"command":["python","-c","import time; time.sleep(2)"],"timeout_secs":5}, ctx), ensure_ascii=False))'`
+
+### N1-4 已完成：图谱推理与技能排序增强
+
+**目标**：增强长期记忆和技能召回质量，让图谱上下文和技能链选择不只依赖简单关键词计数。
+
+**涉及文件**：
+- `python/yizutt_agi/memory.py`
+- `python/yizutt_agi/skills.py`
+- `python/yizutt_agi/skill_composer.py`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**完成情况**：`memory.py` 的 `search_graph()` 现在为事实写入 `score`，并新增 `search_graph_reasoning()`，会在直接命中的事实之外补入一跳关联事实；`graph_context()` 输出带分数的 prompt-ready 事实。图谱抽取新增英文/中文 `requires`、`improves` 关系。`skills.py` 新增 `search_skills()`，基于技能 name、description、完整 `SKILL.md` 正文和中文 n-gram token 计算覆盖率、密度、精确匹配和轻量 recency 分；`skill_context()` 改用同一排序。`skill_composer.py` 复用 `SkillStore.search_skills()`，workflow 草稿会记录命中词和步骤数。
+
+**手动验证命令**：
+- 图谱推理：`PYTHONPATH=python python -c 'from yizutt_agi.memory import WorkingMemory; import tempfile, json; td=tempfile.TemporaryDirectory(); mem=WorkingMemory(td.name+"/work.sqlite3"); mem.append_message("s1", "user", "Project Nexus uses SQLite for memory."); mem.append_message("s1", "user", "SQLite improves graph reasoning for memory replay."); hits=mem.search_graph_reasoning("Nexus graph memory", 5); print(json.dumps({"count": len(hits), "top": hits[0]["relation"], "score": hits[0]["score"], "context": mem.graph_context("Nexus graph memory", 5)}, ensure_ascii=False)); mem.close(); td.cleanup()'`
+- 技能排序：`PYTHONPATH=python python -c 'from yizutt_agi.skills import SkillStore; import tempfile, json; td=tempfile.TemporaryDirectory(); s=SkillStore(td.name); s.save_skill("graph-memory-replay", "Use graph memory for replay analysis", ["Load graph memory facts", "Rank related facts by score", "Replay the task trace"], "{}"); s.save_skill("runtime-build", "Build Rust runtime", ["Run cargo build", "Inspect worker status"], "{}"); hits=s.search_skills("graph replay memory", 3); print(json.dumps({"top": hits[0]["name"], "score": hits[0]["score"], "context": s.skill_context("graph replay memory")}, ensure_ascii=False)); td.cleanup()'`
+
+### N1-5 已完成：CI Web 面板 Smoke 检查
+
+**目标**：扩展 CI，覆盖本地 Web 面板最小可启动和关键只读 API，避免面板静态/HTTP 回归。
+
+**涉及文件**：
+- `.github/workflows/ci.yml`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**完成情况**：GitHub Actions 在 Rust build 和 Python 编译检查后启动 `python -m yizutt_agi.panel`，访问面板 HTML、`/api/config`、`/api/history?limit=2` 和 `/api/runtime-tasks?limit=2`，并静态断言前端包含 `/api/submit-stream`、`/api/history`、`/api/runtime-tasks` 和 `loadHistoryRun`。该 smoke 不依赖真实模型或正在运行的 Runtime。
+
+**手动验证命令**：
+- `cargo check --workspace --locked`
+- `PYTHONPATH=python python -m yizutt_agi.panel --port 50981 --runtime-bin target/debug/yizutt-runtime --runtime-home .yizutt/ci-runtime --history-path .yizutt/ci-panel/history.sqlite3`
+- `curl -fsS http://127.0.0.1:50981/ >/dev/null`
+- `curl -fsS http://127.0.0.1:50981/api/config | python -m json.tool >/dev/null`
+- `curl -fsS 'http://127.0.0.1:50981/api/history?limit=2' | python -m json.tool >/dev/null`
+- `curl -fsS 'http://127.0.0.1:50981/api/runtime-tasks?limit=2' | python -m json.tool >/dev/null`
+
+### N2-1 已完成：持久队列与并行子任务调度
+
+**目标**：把当前内存调度和 plan-only 编排升级为可恢复的持久任务队列，并让结构化子任务可以按依赖关系并行派发给多个 Worker。
+
+**涉及文件**：
+- `crates/yizutt-runtime/src/main.rs`
+- `python/yizutt_agi/panel.py`
+- `web/panel/index.html`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**完成情况**：Runtime 新增 append-only `.yizutt/runtime/tasks.jsonl` 任务事件日志，普通 `submit`、`submit --stream`、父任务和子任务都会写入 queued/running/final 状态。CLI 新增 `yizutt-runtime tasks --home .yizutt/runtime --limit 20`，可在 Runtime 停止或重启后折叠 JSONL 事件并查看最新任务状态。普通 `submit` 若传入 `context.execute_plan_parallel=true` 或 `context.runtime_execute_plan_parallel=true`，Runtime 会从父任务 trace 的 `plan_created` 事件中提取计划，把每个无依赖子任务写入持久日志，并并发派发给 WorkerPool；最终回复会追加 `parallel_subtasks` 和合并 trace。Web 面板新增 `/api/runtime-tasks` 和“Runtime 队列”视图，读取同一任务日志。
+
+**手动验证命令**：
+- 构建检查：`cargo check --workspace --locked && cargo build --workspace --locked`
+- 编译检查：`PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py examples/local_mock_model.py examples/echo_mcp_server.py`
+- 终端 1：`PYTHONPATH=python python examples/local_mock_model.py --port 51090`
+- 终端 2：`PYTHONPATH=python YIZUTT_LOCAL_MODEL_URL=http://127.0.0.1:51090 target/debug/yizutt-runtime run --bind 127.0.0.1:51000 --worker-base-port 51010 --min-workers 1 --max-workers 3 --home .yizutt/n2-runtime --task-timeout-secs 60`
+- 终端 3：`target/debug/yizutt-runtime submit --addr http://127.0.0.1:51000 --session n2-parallel --task "Plan and execute README review and runtime status summary" --context-json '{"provider":"local","orchestrate":true,"execute_plan_parallel":true,"max_subtasks":2,"max_tool_steps":2,"skill_name":"n2-parallel-smoke"}'`
+- 队列查询：`target/debug/yizutt-runtime tasks --home .yizutt/n2-runtime --limit 10`
+- 面板 API：`PYTHONPATH=python python -m yizutt_agi.panel --port 50981 --runtime-bin target/debug/yizutt-runtime --runtime-home .yizutt/n2-runtime --history-path .yizutt/ci-panel/history.sqlite3` 后执行 `curl -fsS 'http://127.0.0.1:50981/api/runtime-tasks?limit=2' | python -m json.tool >/dev/null`
+
+### N2-2 已完成：依赖图调度与重试/背压策略
+
+**目标**：在 N2-1 的无依赖并行派发基础上，为子任务计划增加依赖图、失败重试、最大并发和 backpressure 策略。
+
+**涉及文件**：
+- `crates/yizutt-runtime/src/main.rs`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**完成情况**：Runtime 的并行计划派发现在会先规范化子任务计划，读取可选 `depends_on` 字段并按依赖满足的 ready wave 执行。`context.max_parallel_concurrency` 控制每个 wave 的最大并发，`context.max_parallel_subtasks` 控制队列深度，超过时返回 `status: "queue_rejected"` 和 `reason: "max_parallel_subtasks_exceeded"`；`context.max_subtask_retries` 控制失败重试次数，每次 retry 都写入持久任务日志，runtime task id 使用 `:retry-N` 后缀。依赖失败或循环依赖导致无法 ready 的子任务会返回 `skipped_dependency_failed` 和缺失依赖列表。现有 `submit`、`submit --stream` 和 `tasks` CLI 保持兼容。
+
+**手动验证命令**：
+- 构建检查：`cargo check --workspace --locked && cargo build --workspace --locked`
+- 端到端并行计划：沿用 N2-1 的本地 mock 验证命令，并在 context 中加入 `"max_parallel_concurrency":2,"max_parallel_subtasks":8,"max_subtask_retries":1`
+- 队列深度拒绝：提交包含超过 `max_parallel_subtasks` 的计划或把 `max_parallel_subtasks` 设为 1，最终 `parallel_subtasks` 应返回 `queue_rejected`
+
+### N2-3 已完成：长期运行任务恢复执行
+
+**目标**：在已有持久任务日志基础上，让 Runtime 启动后能发现未完成任务，并按策略恢复或标记过期。
+
+**涉及文件**：
+- `crates/yizutt-runtime/src/main.rs`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**验收标准**：
+- Runtime 启动时能读取 `tasks.jsonl` 并识别 queued/running 但无最终状态的任务。
+- 可配置 `resume_incomplete_tasks` 或 `expire_incomplete_tasks`。
+- 恢复/过期动作写入新的持久日志记录。
+- 不破坏现有 `submit`、`submit --stream`、`tasks` CLI。
+
+**完成情况**：Runtime `run` 新增 `--resume-incomplete-tasks` 和 `--expire-incomplete-tasks` 两个互斥启动参数。启动时会读取 `.yizutt/runtime/tasks.jsonl` 的最新任务记录，识别未进入最终状态的 queued/running/recovery 任务；过期模式会追加 `expired_on_startup` 审计记录，恢复模式会追加 `recovery_queued` 后重新派发顶层任务或子任务。恢复执行复用原有 WorkerPool、任务上下文和 `dispatch_runtime_task` 通路，现有 `submit`、`submit --stream` 和 `tasks` CLI 保持兼容。
+
+**手动验证命令**：
+- 构建检查：`cargo check --workspace --locked && cargo build --workspace --locked`
+- 过期恢复：写入一个 queued 任务到临时 `tasks.jsonl`，启动 `target/debug/yizutt-runtime run --home .yizutt/recovery-test --expire-incomplete-tasks` 后，`target/debug/yizutt-runtime tasks --home .yizutt/recovery-test --limit 5` 应显示 `expired_on_startup`
+- 恢复执行：启动 `examples/local_mock_model.py`，写入一个带本地 provider/context 的 queued 任务，启动 `target/debug/yizutt-runtime run --home .yizutt/recovery-resume-test --resume-incomplete-tasks` 后，`tasks` 应显示该任务最终进入 `ok`
+
+### N2-4 建议任务：容器或 OS sandbox Worker 隔离
+
+**目标**：在现有工具级策略和 Worker 子进程隔离基础上，增加可选的系统级隔离边界，降低命令工具和 sidecar 执行的生产风险。
+
+**建议涉及文件**：
+- `crates/yizutt-runtime/src/main.rs`
+- `python/yizutt_agi/executor.py`
+- `README.md`
+- `README_CN.md`
+- `CONTEXT.md`
+
+**验收标准**：
+- Runtime/Worker 支持显式开启的 sandbox profile，默认仍保持当前本地开发行为。
+- 可限制 Worker 工作目录、环境变量、进程资源或网络访问，并在不支持的平台返回清晰错误。
+- `status` 或任务 trace 能暴露当前 sandbox profile 与失败原因。
+- 不破坏现有本地 mock demo、`submit`、`submit --stream`、`tasks` CLI。
+
 ### 当前任务状态
 
-截至本次更新，P0 到 P4 队列和 N1-1 Web 面板流式 trace 消费均已完成。下一个建议任务是 N1-2：Web 面板持久任务历史与 replay，把每次提交的任务、session、状态、trace 摘要和完成时间保存到本地 SQLite 或 JSONL，供浏览器回看和复盘。
+截至本次更新，P0 到 P4 队列、N1-1 Web 面板流式 trace 消费、N1-2 Web 面板持久任务历史与 replay、N1-3 生产沙箱基础隔离与网络白名单、N1-4 图谱推理与技能排序增强、N1-5 CI Web 面板 smoke 检查、N2-1 持久队列与并行子任务调度、N2-2 依赖图调度与重试/背压策略、N2-3 长期运行任务恢复执行均已完成。下一个建议任务是 N2-4：容器或 OS sandbox Worker 隔离。
 
 ## 七、常用开发命令
 
@@ -364,10 +520,13 @@ cargo run -p yizutt-runtime -- submit --task "你的任务描述" --addr http://
 # 查看状态
 cargo run -p yizutt-runtime -- status --addr http://127.0.0.1:50200
 
+# 查看 Runtime 持久任务队列
+cargo run -p yizutt-runtime -- tasks --home .yizutt/runtime --limit 20
+
 # 复杂任务规划
 cargo run -p yizutt-runtime -- submit --task "为本地面板、主动健康检查和文档更新制定三步实现计划" --context-json '{"provider":"openai","orchestrate":true,"max_subtasks":3}'
 
-# 启动本地 Wed/Web 面板
+# 启动本地 Web 面板
 PYTHONPATH=python python -m yizutt_agi.panel --port 50280 --runtime-addr http://127.0.0.1:50200
 
 # Python 离线闭环测试
@@ -393,4 +552,4 @@ python -m py_compile python/yizutt_agi/*.py
 
 ---
 
-最后更新：2026-05-08
+最后更新：2026-05-09

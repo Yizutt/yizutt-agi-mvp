@@ -31,3 +31,28 @@ jobs:
 
       - name: Python compile check
         run: PYTHONPATH=python python -m py_compile python/yizutt_agi/*.py
+
+      - name: Web panel smoke check
+        run: |
+          PYTHONPATH=python python -m yizutt_agi.panel \
+            --port 50981 \
+            --runtime-bin target/debug/yizutt-runtime \
+            --runtime-home .yizutt/ci-runtime \
+            --history-path .yizutt/ci-panel/history.sqlite3 \
+            > panel.log 2>&1 &
+          PANEL_PID=$!
+          trap 'kill "$PANEL_PID" 2>/dev/null || true' EXIT
+          sleep 2
+          curl -fsS http://127.0.0.1:50981/ >/dev/null
+          curl -fsS http://127.0.0.1:50981/api/config | python -m json.tool >/dev/null
+          curl -fsS http://127.0.0.1:50981/api/history?limit=2 | python -m json.tool >/dev/null
+          curl -fsS http://127.0.0.1:50981/api/runtime-tasks?limit=2 | python -m json.tool >/dev/null
+          python - <<'PY'
+          from pathlib import Path
+          text = Path("web/panel/index.html").read_text(encoding="utf-8")
+          assert "/api/submit-stream" in text
+          assert "/api/history" in text
+          assert "/api/runtime-tasks" in text
+          assert "loadHistoryRun" in text
+          print("panel-smoke-ok")
+          PY

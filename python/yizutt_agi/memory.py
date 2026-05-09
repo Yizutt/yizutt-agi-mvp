@@ -351,7 +351,7 @@ class WorkingMemory:
         return row["id"] if row else relation_id
 
     def search_graph(self, query: str, limit: int = 10) -> list[dict]:
-        terms = tokenize_text(query).split()
+        terms = set(tokenize_text(query).split())
         rows = self.db.execute(
             """
             select
@@ -376,19 +376,59 @@ class WorkingMemory:
         scored = []
         for row in rows:
             item = self._graph_row_to_dict(row)
-            haystack = " ".join([item["source"], item["relation"], item["target"], item["source_kind"], item["target_kind"]]).lower()
-            score = sum(1 for term in terms if term.lower() in haystack)
-            if score or not terms:
+            score = graph_fact_score(item, terms)
+            if score > 0 or not terms:
+                item["score"] = round(score, 3)
                 scored.append((score, item))
         scored.sort(key=lambda pair: (pair[0], pair[1]["created_at"]), reverse=True)
         return [item for _, item in scored[:limit]]
 
     def graph_context(self, query: str, limit: int = 5) -> str:
-        facts = self.search_graph(query, limit)
+        facts = self.search_graph_reasoning(query, limit)
         return "\n".join(
-            f"{item['source']} -[{item['relation']}]-> {item['target']} (session: {item['session_id'] or 'global'})"
+            f"{item['source']} -[{item['relation']}]-> {item['target']} (score: {item.get('score', 0):.3f}, session: {item['session_id'] or 'global'})"
             for item in facts
         )
+
+    def search_graph_reasoning(self, query: str, limit: int = 10) -> list[dict]:
+        direct = self.search_graph(query, limit=max(limit, 5))
+        if not direct:
+            return []
+        entities = {normalize_entity_name(item["source"]) for item in direct[:3]}
+        entities.update(normalize_entity_name(item["target"]) for item in direct[:3])
+        rows = self.db.execute(
+            """
+            select
+              r.id,
+              s.name as source,
+              s.kind as source_kind,
+              r.relation,
+              t.name as target,
+              t.kind as target_kind,
+              r.session_id,
+              r.evidence_message_id,
+              r.weight,
+              r.meta_json,
+              r.created_at
+            from graph_relations r
+            join graph_entities s on s.id = r.source_id
+            join graph_entities t on t.id = r.target_id
+            order by r.created_at desc
+            limit 500
+            """
+        ).fetchall()
+        by_id = {item["id"]: item for item in direct}
+        for row in rows:
+            item = self._graph_row_to_dict(row)
+            if item["id"] in by_id:
+                continue
+            if normalize_entity_name(item["source"]) not in entities and normalize_entity_name(item["target"]) not in entities:
+                continue
+            item["score"] = round(max(0.05, graph_fact_score(item, set(tokenize_text(query).split())) * 0.55), 3)
+            by_id[item["id"]] = item
+        result = list(by_id.values())
+        result.sort(key=lambda item: (float(item.get("score", 0)), item["created_at"]), reverse=True)
+        return result[:limit]
 
     def search_vector(self, query: str, limit: int = 10) -> list[dict]:
         query_vector = text_to_sparse_vector(query)
@@ -621,6 +661,23 @@ def extract_graph_facts(text: str, role: str = "user") -> list[dict]:
                     "relation": "uses",
                     "target": target,
                     "target_kind": "technology",
+                    })
+    for pattern, relation in (
+        (r"\b([A-Za-z0-9_\-\u4e00-\u9fff]+)\s+(?:requires|needs)\s+([^.。;\n]+)", "requires"),
+        (r"\b([A-Za-z0-9_\-\u4e00-\u9fff]+)\s+(?:improves|enhances)\s+([^.。;\n]+)", "improves"),
+        (r"([A-Za-z0-9_\-\u4e00-\u9fff]+)\s*(?:需要|依赖)([^。；;\n]+)", "requires"),
+        (r"([A-Za-z0-9_\-\u4e00-\u9fff]+)\s*(?:增强|改进)([^。；;\n]+)", "improves"),
+    ):
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            source = clean_entity_name(match.group(1))
+            target = clean_entity_name(match.group(2))
+            if source and target:
+                facts.append({
+                    "source": source,
+                    "source_kind": "concept",
+                    "relation": relation,
+                    "target": target,
+                    "target_kind": "concept",
                 })
     return dedupe_facts(facts)
 
@@ -660,6 +717,30 @@ def merge_aliases(existing: list[str], incoming: list[str]) -> list[str]:
             seen.add(key)
             result.append(clean)
     return result[:20]
+
+
+def graph_fact_score(item: dict, terms: set[str]) -> float:
+    if not terms:
+        return float(item.get("weight", 1.0))
+    text = " ".join(
+        [
+            item.get("source", ""),
+            item.get("relation", ""),
+            item.get("target", ""),
+            item.get("source_kind", ""),
+            item.get("target_kind", ""),
+        ]
+    )
+    fact_terms = set(tokenize_text(text).split())
+    if not fact_terms:
+        return 0.0
+    overlap = terms & fact_terms
+    if not overlap:
+        return 0.0
+    coverage = len(overlap) / max(1, len(terms))
+    density = len(overlap) / max(1, len(fact_terms))
+    relation_bonus = 0.15 if item.get("relation") in {"prefers", "uses", "requires", "improves"} else 0.0
+    return (coverage * 0.7) + (density * 0.2) + relation_bonus + (float(item.get("weight", 1.0)) * 0.05)
 
 
 def text_to_sparse_vector(text: str, max_terms: int = 256) -> dict[str, float]:
